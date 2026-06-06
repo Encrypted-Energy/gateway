@@ -1,0 +1,24 @@
+[project]
+name = "ee-gateway-worker"
+version = "0.0.0"
+description = "EE Gateway worker — scans Hubble BLE packets and ingests them to the Hubble cloud."
+requires-python = ">=3.11"
+license = { text = "GPL-3.0-only" }
+dependencies = [
+    "pyhubblenetwork",
+    "python-json-logger",
+]
+
+[project.optional-dependencies]
+dev = ["pytest", "pyhubblenetwork"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]

@@ -1,0 +1,2 @@
+id: "encryptedenergy" # App store ID. Lowercase letters and dashes only. Every app ID in this store must start with this prefix (e.g. "encryptedenergy-ee-gateway").
+name: "Encrypted Energy" # Shown in the umbrelOS UI as "Encrypted Energy App Store".

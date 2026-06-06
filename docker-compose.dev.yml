@@ -1,0 +1,59 @@
+# EE Gateway — local development composition
+# Copyright (C) 2026 encryptedenergy.com
+# SPDX-License-Identifier: GPL-3.0-only
+#
+# Runs both containers locally from the source Dockerfiles, for iterating on the
+# UI and the worker/UI plumbing without an Umbrel host. Bring it up with
+# `scripts/dev-up.sh` (which adds --build), then open http://localhost:8080.
+#
+# Differences from the Umbrel composition (umbrel/docker-compose.yml):
+#   * No app_proxy — the UI port is published directly to the host.
+#   * Images are built from local context instead of pulled from Docker Hub.
+#   * Shared /data is a named volume, so neither container hits host-uid
+#     permission problems on the bind mount (Umbrel pre-creates its app-data
+#     dir with the right owner; in dev we let Docker manage the volume).
+#   * The worker's Bluetooth wiring (host network, NET_ADMIN/NET_RAW, the D-Bus
+#     socket) is omitted by default so this file also runs on macOS/OrbStack,
+#     where there is no host D-Bus and no usable BLE radio. Off a Linux+BLE
+#     host the worker simply reports a scan error or "needs_setup"; that is
+#     expected in dev. To exercise real scanning on a Linux dev box, uncomment
+#     the marked block below.
+#
+# `version:` is intentionally omitted: modern `docker compose` treats it as
+# obsolete. The Umbrel file keeps "3.7" because umbrelOS expects it.
+
+services:
+
+  ui:
+    build: ./ui
+    image: ee-gateway-ui:dev
+    init: true
+    ports:
+      - "8080:8080"
+    volumes:
+      - ee_dev_data:/data
+    environment:
+      EE_DATA_DIR: /data
+      EE_UI_PORT: 8080
+
+  worker:
+    build: ./worker
+    image: ee-gateway-worker:dev
+    init: true
+    volumes:
+      - ee_dev_data:/data
+    environment:
+      EE_DATA_DIR: /data
+    # --- Real BLE scanning on a Linux + Bluetooth dev host (optional) ---
+    # Uncomment to mirror the Umbrel worker contract. Do NOT enable on macOS/
+    # OrbStack: there is no /var/run/dbus to mount and host networking differs.
+    # network_mode: host
+    # cap_add:
+    #   - NET_ADMIN
+    #   - NET_RAW
+    # volumes:
+    #   - ee_dev_data:/data
+    #   - /var/run/dbus:/var/run/dbus:ro
+
+volumes:
+  ee_dev_data:

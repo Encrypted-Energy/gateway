@@ -1,0 +1,35 @@
+{# EE Gateway UI base layout. GPL-3.0-only; see LICENSE at the repository root. #}
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}EE Gateway{% endblock %}</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet"
+        href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500&display=swap">
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  <div class="frame">
+    <header class="topbar">
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true"></span>
+        <span class="brand-name">EE&thinsp;/&thinsp;GATEWAY</span>
+      </div>
+      <span class="brand-tag">HUBBLE&nbsp;BLE&nbsp;&middot;&nbsp;v0</span>
+    </header>
+
+    <main class="content">
+      {% block content %}{% endblock %}
+    </main>
+
+    <footer class="footer">
+      <span>encryptedenergy.com</span>
+      <span class="footer-sep" aria-hidden="true"></span>
+      <span>self-hosted gateway</span>
+    </footer>
+  </div>
+</body>
+</html>

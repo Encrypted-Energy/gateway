@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.pytest_cache/
+
+# Virtual environments
+.venv/
+venv/
+hubble-venv/
+
+# Runtime data (written into the Umbrel app data dir, never committed)
+*.db
+*.db-wal
+*.db-shm
+config.json
+state.json
+
+# Secrets
+.env
+*.env
+
+# OS cruft
+.DS_Store
+Thumbs.db

@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256" role="img" aria-label="EE Gateway">
+  <title>EE Gateway</title>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#0B1220"/>
+      <stop offset="1" stop-color="#11283A"/>
+    </linearGradient>
+    <linearGradient id="bolt" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#3CE0C4"/>
+      <stop offset="1" stop-color="#4F8CFF"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.5" cy="0.42" r="0.6">
+      <stop offset="0" stop-color="#4F8CFF" stop-opacity="0.35"/>
+      <stop offset="1" stop-color="#4F8CFF" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+
+  <!-- App tile -->
+  <rect x="0" y="0" width="256" height="256" rx="56" fill="url(#bg)"/>
+  <rect x="3" y="3" width="250" height="250" rx="53" fill="none" stroke="#FFFFFF" stroke-opacity="0.06" stroke-width="2"/>
+
+  <!-- Soft energy glow behind the mark -->
+  <circle cx="128" cy="116" r="96" fill="url(#glow)"/>
+
+  <!-- Broadcast arcs: a quiet nod to the BLE gateway role, kept faint so the
+       mark stays clean at small sizes. -->
+  <g fill="none" stroke="#7FE9D6" stroke-linecap="round">
+    <path d="M70 150 A 64 64 0 0 1 186 150" stroke-opacity="0.20" stroke-width="6"/>
+    <path d="M92 150 A 40 40 0 0 1 164 150" stroke-opacity="0.30" stroke-width="6"/>
+  </g>
+
+  <!-- Energy bolt -->
+  <path d="M150 40 L96 142 L126 142 L106 216 L174 112 L142 112 Z"
+        fill="url(#bolt)"/>
+</svg>

@@ -1,0 +1,52 @@
+{# EE Gateway UI setup wizard. GPL-3.0-only; see LICENSE at the repository root. #}
+{% extends "base.html" %}
+{% block title %}Setup &middot; EE Gateway{% endblock %}
+
+{% block content %}
+<section class="panel reveal" data-reveal="1">
+  <div class="panel-head">
+    <span class="eyebrow">{% if configured %}Reconfigure{% else %}Step 1 of 1{% endif %}</span>
+    <h1 class="panel-title">Connect to Hubble</h1>
+    <p class="panel-sub">
+      Enter the Hubble Network credentials this gateway uses to ingest the BLE
+      packets it scans. They are stored on this device only and handed to the
+      worker through a local file.
+    </p>
+  </div>
+
+  {% if error %}
+  <p class="alert" role="alert">{{ error }}</p>
+  {% endif %}
+
+  <form class="form" method="post" action="{{ url_for('save_config') }}"
+        autocomplete="off">
+    <label class="field">
+      <span class="field-label">Organization ID</span>
+      <input class="field-input" type="text" name="org_id" value="{{ org_id }}"
+             placeholder="b4ec39bd-24e4-4395-b3ca-..." spellcheck="false"
+             autocomplete="off" required>
+    </label>
+
+    <label class="field">
+      <span class="field-label">API token</span>
+      <input class="field-input" type="password" name="api_token"
+             placeholder="paste your Hubble API token" spellcheck="false"
+             autocomplete="off" required>
+      <span class="field-hint">
+        {% if configured %}
+        Re-enter the token to apply changes — it is never displayed after saving.
+        {% else %}
+        Stored on this device only; never displayed again after you save.
+        {% endif %}
+      </span>
+    </label>
+
+    <div class="form-actions">
+      <button class="btn btn-primary" type="submit">Save &amp; start gateway</button>
+      {% if configured %}
+      <a class="btn btn-ghost" href="{{ url_for('index') }}">Cancel</a>
+      {% endif %}
+    </div>
+  </form>
+</section>
+{% endblock %}

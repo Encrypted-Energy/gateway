@@ -1,0 +1,342 @@
+# EE Gateway UI — Flask application.
+# Copyright (C) 2026 encryptedenergy.com
+#
+# This program is free software: you can redistribute it and/or modify it
+# under the terms of the GNU General Public License version 3 as published
+# by the Free Software Foundation.
+#
+# This program is distributed in the hope that it will be useful, but
+# WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY
+# or FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for
+# more details. You should have received a copy of the license in the LICENSE
+# file at the repository root; if not, see <https://www.gnu.org/licenses/>.
+
+"""Setup wizard and read-only dashboard for the EE Gateway.
+
+This is the unprivileged half of the gateway. It runs in its own container,
+never touches Bluetooth, and never imports the Hubble SDK or the worker
+package. It shares one directory with the worker and communicates entirely
+through three files in that directory:
+
+* ``config.json`` — the UI writes it (the setup form); the worker reads it.
+* ``state.json``  — the worker writes it; the UI reads it for status counts.
+* ``packets.db``  — the worker writes it; the UI opens it strictly read-only.
+
+The ``packet_log`` schema is a contract shared with ``worker/db.py``. Because
+the two containers are deliberately independent, this file re-declares the
+handful of columns it reads rather than importing them. If the worker's
+schema changes, the device query below must change with it.
+
+Every read degrades gracefully: a missing or half-written file is an expected
+state (the worker may not have started yet), not an error, so the dashboard
+always renders something sensible.
+"""
+
+import json
+import os
+import sqlite3
+import tempfile
+from datetime import datetime
+from pathlib import Path
+
+from flask import Flask, redirect, render_template, request, url_for
+
+DEFAULT_DATA_DIR = "/data"
+DEFAULT_PORT = 8080
+
+# status code in state.json -> (display label, tone class used by the CSS)
+_STATUS_LABELS = {
+    "starting": ("Starting up", "neutral"),
+    "running": ("Running", "ok"),
+    "needs_setup": ("Waiting for credentials", "warn"),
+    "scan_error": ("Bluetooth scan error", "error"),
+    "auth_error": ("Authentication failed", "error"),
+    "stopped": ("Stopped", "neutral"),
+}
+
+# Per-device rollup. Mirrors worker/db.py's device_summary(): newest packet's
+# RSSI via a correlated subquery, NULL eids excluded, most-recent device first.
+_DEVICE_QUERY = """
+    SELECT eid,
+           COUNT(*)        AS packets,
+           MIN(scanned_at) AS first_seen,
+           MAX(scanned_at) AS last_seen,
+           (SELECT rssi FROM packet_log inner_log
+             WHERE inner_log.eid = packet_log.eid
+             ORDER BY id DESC LIMIT 1) AS last_rssi
+      FROM packet_log
+     WHERE eid IS NOT NULL
+     GROUP BY eid
+     ORDER BY last_seen DESC
+     LIMIT 100
+"""
+
+
+# --------------------------------------------------------------------------
+# Paths
+# --------------------------------------------------------------------------
+
+def _config_path(data_dir):
+    return os.path.join(data_dir, "config.json")
+
+
+def _state_path(data_dir):
+    return os.path.join(data_dir, "state.json")
+
+
+def _db_path(data_dir):
+    return os.path.join(data_dir, "packets.db")
+
+
+# --------------------------------------------------------------------------
+# Reads (all failure-tolerant)
+# --------------------------------------------------------------------------
+
+def _read_json(path):
+    """Parse a JSON file; return ``None`` on any failure.
+
+    A missing or half-written file is expected, not exceptional: the worker
+    may not have started yet, or may be writing as we read. Callers treat a
+    ``None`` result as 'not available yet'.
+    """
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            return json.load(handle)
+    except (OSError, ValueError):
+        return None
+
+
+def read_config(data_dir):
+    """Return stored Hubble credentials, or ``None`` if not configured.
+
+    Only a config carrying a non-empty ``org_id`` and ``api_token`` counts as
+    configured. A missing file, malformed JSON, or blank fields all read as
+    'not configured', so the UI falls back to the setup wizard.
+    """
+    raw = _read_json(_config_path(data_dir))
+    if not isinstance(raw, dict):
+        return None
+    org_id = str(raw.get("org_id") or "").strip()
+    api_token = str(raw.get("api_token") or "").strip()
+    if not org_id or not api_token:
+        return None
+    return {"org_id": org_id, "api_token": api_token}
+
+
+def read_state(data_dir):
+    """Return the worker's last-written state dict, or ``None`` if unavailable."""
+    raw = _read_json(_state_path(data_dir))
+    return raw if isinstance(raw, dict) else None
+
+
+def read_devices(data_dir):
+    """Return per-device rollup rows from the worker's packet database.
+
+    The database is opened strictly read-only (``mode=ro``): a bug in the UI
+    can never write to or corrupt the worker's store. Any failure — the file
+    does not exist yet, the table is missing, the worker is mid-write —
+    degrades to an empty list so the dashboard still renders.
+    """
+    path = _db_path(data_dir)
+    if not os.path.exists(path):
+        return []
+    try:
+        uri = Path(os.path.abspath(path)).as_uri() + "?mode=ro"
+        conn = sqlite3.connect(uri, uri=True, timeout=5.0)
+    except (sqlite3.Error, ValueError):
+        return []
+    try:
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(_DEVICE_QUERY).fetchall()
+    except sqlite3.Error:
+        return []
+    finally:
+        conn.close()
+    return [
+        {
+            "eid": row["eid"],
+            "packets": row["packets"],
+            "first_seen": _format_epoch(row["first_seen"]),
+            "last_seen": _format_epoch(row["last_seen"]),
+            "last_rssi": row["last_rssi"],
+        }
+        for row in rows
+    ]
+
+
+# --------------------------------------------------------------------------
+# Write
+# --------------------------------------------------------------------------
+
+def write_config(data_dir, org_id, api_token):
+    """Write ``config.json`` atomically.
+
+    Only the credentials are written. Scan-timing values are intentionally
+    omitted — the worker supplies its own defaults for any key the file does
+    not provide. The write is atomic (temp file + ``os.replace``) so the
+    worker, which re-reads this file every cycle, never sees a partial config.
+    """
+    path = _config_path(data_dir)
+    payload = json.dumps({"org_id": org_id, "api_token": api_token}, indent=2)
+    directory = os.path.dirname(path) or "."
+    handle = tempfile.NamedTemporaryFile(
+        "w", encoding="utf-8", dir=directory,
+        prefix=".config-", suffix=".tmp", delete=False,
+    )
+    try:
+        with handle:
+            handle.write(payload + "\n")
+        os.replace(handle.name, path)
+    except OSError:
+        try:
+            os.unlink(handle.name)
+        except OSError:
+            pass
+        raise
+
+
+# --------------------------------------------------------------------------
+# View helpers
+# --------------------------------------------------------------------------
+
+def _format_epoch(value):
+    """Render an epoch-seconds value as a local timestamp, or an em dash."""
+    if value is None:
+        return "\u2014"
+    try:
+        return datetime.fromtimestamp(float(value)).strftime("%Y-%m-%d %H:%M:%S")
+    except (TypeError, ValueError, OSError, OverflowError):
+        return "\u2014"
+
+
+def _status_view(state):
+    """Translate the worker's state file into display fields for the badge."""
+    if not state:
+        return {
+            "code": "unknown",
+            "label": "Worker not reporting yet",
+            "tone": "neutral",
+            "error": None,
+            "needs_creds": False,
+        }
+    code = str(state.get("status") or "unknown")
+    label, tone = _STATUS_LABELS.get(
+        code, (code.replace("_", " ").capitalize(), "neutral")
+    )
+    return {
+        "code": code,
+        "label": label,
+        "tone": tone,
+        "error": state.get("error"),
+        "needs_creds": code == "auth_error",
+    }
+
+
+def _counts_view(state):
+    """Pull the four headline counters out of the worker's state file."""
+    packets = (state or {}).get("packets") or {}
+
+    def _count(key):
+        value = packets.get(key)
+        return value if isinstance(value, int) else None
+
+    return {
+        "total": _count("total"),
+        "ingested": _count("ingested"),
+        "pending": _count("pending"),
+        "devices": _count("devices"),
+    }
+
+
+# --------------------------------------------------------------------------
+# Application factory
+# --------------------------------------------------------------------------
+
+def create_app(data_dir=None):
+    """Build the Flask application.
+
+    ``data_dir`` is the directory shared with the worker container. When not
+    given it falls back to the ``EE_DATA_DIR`` environment variable, then to
+    ``/data`` — the path baked into the container image. Tests inject a
+    temporary directory directly, which is why this is a parameter rather
+    than read at import time.
+    """
+    if data_dir is None:
+        data_dir = os.environ.get("EE_DATA_DIR", DEFAULT_DATA_DIR)
+    data_dir = str(data_dir)
+
+    app = Flask(__name__)
+    app.config["EE_DATA_DIR"] = data_dir
+
+    @app.route("/healthz")
+    def healthz():
+        """Liveness probe for the container / app proxy."""
+        return "ok", 200
+
+    @app.route("/")
+    def index():
+        """Setup wizard when unconfigured, dashboard once credentials exist."""
+        config = read_config(data_dir)
+        if config is None:
+            return render_template(
+                "setup.html", org_id="", error=None, configured=False
+            )
+        state = read_state(data_dir)
+        return render_template(
+            "dashboard.html",
+            status=_status_view(state),
+            counts=_counts_view(state),
+            devices=read_devices(data_dir),
+            updated=_format_epoch(state.get("updated_at") if state else None),
+        )
+
+    @app.route("/setup")
+    def setup():
+        """Show the credentials form, even when already configured.
+
+        The organization ID is pre-filled when a config exists; the API token
+        field is always left blank and never echoed back — the stored secret
+        is write-only from the UI's point of view.
+        """
+        config = read_config(data_dir)
+        return render_template(
+            "setup.html",
+            org_id=config["org_id"] if config else "",
+            error=None,
+            configured=config is not None,
+        )
+
+    @app.route("/config", methods=["POST"])
+    def save_config():
+        """Validate and persist submitted credentials, then return to ``/``."""
+        org_id = (request.form.get("org_id") or "").strip()
+        api_token = (request.form.get("api_token") or "").strip()
+        if not org_id or not api_token:
+            return (
+                render_template(
+                    "setup.html",
+                    org_id=org_id,
+                    error="Both the organization ID and API token are required.",
+                    configured=read_config(data_dir) is not None,
+                ),
+                400,
+            )
+        write_config(data_dir, org_id, api_token)
+        return redirect(url_for("index"))
+
+    return app
+
+
+def main():
+    """Run the development server (``python -m ee_gateway_ui.app``).
+
+    Flask's built-in server is adequate for this single-user, self-hosted
+    dashboard sitting behind Umbrel's app proxy. Moving to a production WSGI
+    server (gunicorn) is a v1 consideration, not a v0 requirement.
+    """
+    port = int(os.environ.get("EE_UI_PORT", DEFAULT_PORT))
+    create_app().run(host="0.0.0.0", port=port, debug=False)
+
+
+if __name__ == "__main__":
+    main()

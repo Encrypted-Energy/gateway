@@ -1,0 +1,75 @@
+{# EE Gateway UI dashboard. GPL-3.0-only; see LICENSE at the repository root. #}
+{% extends "base.html" %}
+{% block title %}Dashboard &middot; EE Gateway{% endblock %}
+
+{% block content %}
+<section class="dash">
+
+  <div class="status-strip status-{{ status.tone }} reveal" data-reveal="0">
+    <div class="status-line">
+      <span class="status-dot" aria-hidden="true"></span>
+      <span class="status-label">{{ status.label }}</span>
+    </div>
+    {% if status.error %}
+    <p class="status-detail">{{ status.error }}</p>
+    {% endif %}
+    {% if status.needs_creds %}
+    <a class="status-action" href="{{ url_for('setup') }}">Re-enter credentials &rarr;</a>
+    {% endif %}
+  </div>
+
+  <div class="readouts">
+    {% for label, value in [
+        ('Packets seen', counts.total),
+        ('Ingested', counts.ingested),
+        ('Pending', counts.pending),
+        ('Devices', counts.devices)] %}
+    <div class="readout reveal" data-reveal="{{ loop.index }}">
+      <span class="readout-value">{{ value if value is not none else '\u2014' }}</span>
+      <span class="readout-label">{{ label }}</span>
+    </div>
+    {% endfor %}
+  </div>
+
+  <div class="table-block reveal" data-reveal="5">
+    <div class="table-head">
+      <h2 class="table-title">Devices in range</h2>
+      <a class="link-quiet" href="{{ url_for('index') }}">Refresh</a>
+    </div>
+    {% if devices %}
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th>EID</th>
+          <th class="num">Packets</th>
+          <th>First seen</th>
+          <th>Last seen</th>
+          <th class="num">RSSI</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for d in devices %}
+        <tr>
+          <td class="mono">{{ d.eid }}</td>
+          <td class="num">{{ d.packets }}</td>
+          <td class="mono dim">{{ d.first_seen }}</td>
+          <td class="mono dim">{{ d.last_seen }}</td>
+          <td class="num">{{ d.last_rssi if d.last_rssi is not none else '\u2014' }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <p class="empty">
+      No devices yet. Once the worker scans a Hubble packet it appears here.
+    </p>
+    {% endif %}
+  </div>
+
+  <div class="dash-foot reveal" data-reveal="6">
+    <span>Last worker update: {{ updated }}</span>
+    <a class="link-quiet" href="{{ url_for('setup') }}">Reconfigure</a>
+  </div>
+
+</section>
+{% endblock %}
