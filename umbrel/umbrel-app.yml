@@ -13,9 +13,15 @@ manifestVersion: 1
 id: encryptedenergy-ee-gateway
 name: EE Gateway
 tagline: Self-hosted Hubble Network Bluetooth gateway
-icon: https://raw.githubusercontent.com/encryptedenergy/umbrel-community-app-store/main/encryptedenergy-ee-gateway/icon.svg
+icon: https://raw.githubusercontent.com/Encrypted-Energy/umbrel-community-app-store/main/encryptedenergy-ee-gateway/icon.svg
 category: Networking
-version: "0.1.0"
+version: "0.1.1"
+releaseNotes: >-
+  Fixes a first-run permission error on the shared data volume. A one-time init
+  step now sets ownership of /data so the worker and UI, both non-root, can
+  write their database, config, and status files. The worker also gains an
+  on-failure restart so a transient Bluetooth or D-Bus error recovers on its
+  own. No image changes; both containers stay non-root with no privileged mode.
 port: 8080
 description: >-
   EE Gateway turns your Umbrel into a self-hosted Hubble Network Bluetooth
@@ -39,18 +45,13 @@ description: >-
 developer: encryptedenergy.com
 website: https://encryptedenergy.com
 submitter: John Marbach
-submission: https://github.com/encryptedenergy/ee-gateway
-repo: https://github.com/encryptedenergy/ee-gateway
-support: https://github.com/encryptedenergy/ee-gateway/issues
+submission: https://github.com/Encrypted-Energy/gateway
+repo: https://github.com/Encrypted-Energy/gateway
+support: https://github.com/Encrypted-Energy/gateway/issues
 gallery:
-  - https://raw.githubusercontent.com/encryptedenergy/umbrel-community-app-store/main/encryptedenergy-ee-gateway/gallery/1-setup.png
-  - https://raw.githubusercontent.com/encryptedenergy/umbrel-community-app-store/main/encryptedenergy-ee-gateway/gallery/2-dashboard.png
-  - https://raw.githubusercontent.com/encryptedenergy/umbrel-community-app-store/main/encryptedenergy-ee-gateway/gallery/3-status.png
-releaseNotes: >-
-  First public release of EE Gateway. Scans for Hubble Network BLE packets and
-  ingests them to the Hubble cloud, with a one-time setup wizard and a live
-  status dashboard. Two-container design: an unprivileged UI behind Umbrel's
-  app proxy and a worker with scoped Bluetooth access (no privileged mode).
+  - https://raw.githubusercontent.com/Encrypted-Energy/umbrel-community-app-store/main/encryptedenergy-ee-gateway/gallery/1-setup.png
+  - https://raw.githubusercontent.com/Encrypted-Energy/umbrel-community-app-store/main/encryptedenergy-ee-gateway/gallery/2-dashboard.png
+  - https://raw.githubusercontent.com/Encrypted-Energy/umbrel-community-app-store/main/encryptedenergy-ee-gateway/gallery/3-status.png
 dependencies: []
 path: ""
 defaultUsername: ""

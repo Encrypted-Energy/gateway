@@ -1,4 +1,4 @@
-# EE Gateway — Umbrel app composition
+# EE Gateway: Umbrel app composition
 # Copyright (C) 2026 encryptedenergy.com
 # SPDX-License-Identifier: GPL-3.0-only
 #
@@ -11,8 +11,11 @@
 # Credentials are NOT passed as environment variables here. The user enters the
 # Hubble org id and API token once in the UI setup wizard, which writes them to
 # config.json in the shared volume; the worker reads that file every scan cycle.
-# Before setup is completed the worker idles in a "needs_setup" state — it does
-# not crash-loop — so no restart policy is required.
+#
+# umbreld creates ${APP_DATA_DIR}/data owned by root, but both app containers
+# run as uid 1000 and so cannot write it. The init_perms service fixes ownership
+# once before the app containers start. The worker also carries a restart policy
+# so a transient Bluetooth or D-Bus error on real hardware self-heals.
 
 version: "3.7"
 
@@ -25,12 +28,28 @@ services:
       APP_HOST: encryptedenergy-ee-gateway_ui_1
       APP_PORT: 8080
 
+  # One-time root init. umbreld creates the shared /data dir owned by root; both
+  # app containers run as uid 1000 and cannot write it. This chowns /data to
+  # 1000:1000 and exits. It reuses the already-pulled worker image so there is no
+  # extra download, and it is the only place root is used. This is NOT privileged
+  # mode; the app containers themselves stay non-root.
+  init_perms:
+    image: encryptedenergy/ee-gateway-worker:0.1.0
+    user: "0:0"
+    entrypoint: ["sh", "-c", "chown -R 1000:1000 /data"]
+    restart: "no"
+    volumes:
+      - ${APP_DATA_DIR}/data:/data
+
   # Flask setup wizard + status dashboard. Fully unprivileged: no host network,
   # no added capabilities, no Bluetooth access. Runs as uid 1000 (set in the
   # image). init: true so SIGTERM reaches Flask for a clean shutdown.
   ui:
     image: encryptedenergy/ee-gateway-ui:0.1.0
     init: true
+    depends_on:
+      init_perms:
+        condition: service_completed_successfully
     volumes:
       - ${APP_DATA_DIR}/data:/data
     # Both values already default correctly inside the image; they are restated
@@ -45,6 +64,15 @@ services:
   worker:
     image: encryptedenergy/ee-gateway-worker:0.1.0
     init: true
+    # Wait for the one-time ownership fix, then self-heal on any non-zero exit
+    # (a transient radio or D-Bus error, or a start that raced init_perms). In
+    # umbrel-dev there is no Bluetooth radio, so after setup the worker will
+    # restart-loop on a bluez timeout; that is a dev-only artifact and does not
+    # happen on a Pi with a real adapter.
+    restart: on-failure
+    depends_on:
+      init_perms:
+        condition: service_completed_successfully
     # Host networking gives the container direct use of the host Bluetooth stack
     # and a normal outbound route to the Hubble cloud.
     network_mode: host
