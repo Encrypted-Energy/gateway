@@ -44,10 +44,17 @@ from pathlib import Path
 DEFAULT_SCAN_INTERVAL = 15
 DEFAULT_SCAN_TIMEOUT = 10
 
+# Heartbeat defaults. The worker POSTs to encryptedenergy.com periodically so
+# the EE dashboard shows the gateway as alive. Both are overridable via env
+# (EE_BASE_URL, EE_HEARTBEAT_INTERVAL) or the file (ee_base_url, heartbeat_interval).
+DEFAULT_EE_BASE_URL = "https://encryptedenergy.com"
+DEFAULT_HEARTBEAT_INTERVAL = 60
+
 # Accepted ranges. Lower bounds keep the radio from being hammered; upper
 # bounds keep the gateway responsive to config changes and shutdown.
 _MIN_INTERVAL, _MAX_INTERVAL = 0, 3600
 _MIN_TIMEOUT, _MAX_TIMEOUT = 1, 300
+_MIN_HEARTBEAT, _MAX_HEARTBEAT = 15, 3600
 
 
 class ConfigError(Exception):
@@ -62,6 +69,8 @@ class Config:
     api_token: str
     scan_interval: int = DEFAULT_SCAN_INTERVAL
     scan_timeout: int = DEFAULT_SCAN_TIMEOUT
+    ee_base_url: str = DEFAULT_EE_BASE_URL
+    heartbeat_interval: int = DEFAULT_HEARTBEAT_INTERVAL
 
 
 def _read_json_file(path: Path) -> dict:
@@ -132,9 +141,22 @@ def load(config_path: str | Path) -> Config:
             f"got {scan_timeout}"
         )
 
+    ee_base_url = str(pick("EE_BASE_URL", "ee_base_url", DEFAULT_EE_BASE_URL))
+    heartbeat_interval = _coerce_int(
+        pick("EE_HEARTBEAT_INTERVAL", "heartbeat_interval", DEFAULT_HEARTBEAT_INTERVAL),
+        "heartbeat_interval",
+    )
+    if not _MIN_HEARTBEAT <= heartbeat_interval <= _MAX_HEARTBEAT:
+        raise ConfigError(
+            f"heartbeat_interval must be {_MIN_HEARTBEAT}-{_MAX_HEARTBEAT}s, "
+            f"got {heartbeat_interval}"
+        )
+
     return Config(
         org_id=str(org_id),
         api_token=str(api_token),
         scan_interval=scan_interval,
         scan_timeout=scan_timeout,
+        ee_base_url=ee_base_url,
+        heartbeat_interval=heartbeat_interval,
     )

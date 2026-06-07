@@ -45,7 +45,7 @@ from hubblenetwork.errors import HubbleError, InvalidCredentialsError
 from hubblenetwork.org import Organization
 from hubblenetwork.packets import EncryptedPacket, Location
 
-from ee_gateway_worker import config, db
+from ee_gateway_worker import config, db, heartbeat
 
 log = logging.getLogger("ee_gateway_worker")
 
@@ -223,6 +223,30 @@ def ingest_loop() -> None:
         _stop.wait(INGEST_POLL_SECONDS)
 
 
+# --- heartbeat loop --------------------------------------------------------
+
+def heartbeat_loop() -> None:
+    """Send a periodic alive signal to encryptedenergy.com.
+
+    Reads the current config every iteration so a credential or interval
+    change in config.json takes effect within one cycle. Skips silently
+    when credentials are missing (setup wizard has not been completed yet),
+    rather than crashing the loop. All HTTP failures are non-fatal and
+    handled inside heartbeat.report().
+    """
+    while not _stop.is_set():
+        try:
+            cfg = config.load(CONFIG_PATH)
+        except config.ConfigError:
+            # No credentials yet; just wait and try again. The scan loop
+            # writes the user-facing state, so we do not duplicate that here.
+            _stop.wait(30)
+            continue
+
+        heartbeat.report(base_url=cfg.ee_base_url, api_token=cfg.api_token)
+        _stop.wait(cfg.heartbeat_interval)
+
+
 # --- entry point -----------------------------------------------------------
 
 def _handle_signal(signum, _frame) -> None:
@@ -244,11 +268,14 @@ def main() -> None:
 
     ingest = threading.Thread(target=ingest_loop, name="ingest", daemon=True)
     ingest.start()
+    beat = threading.Thread(target=heartbeat_loop, name="heartbeat", daemon=True)
+    beat.start()
     try:
         scan_loop()  # runs on the main thread until _stop is set
     finally:
         _stop.set()
         ingest.join(timeout=15)
+        beat.join(timeout=5)
         _write_state(conn, status="stopped")
         conn.close()
 
