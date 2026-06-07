@@ -200,13 +200,13 @@ def write_config(data_dir, org_id, api_token):
 # --------------------------------------------------------------------------
 
 def _format_epoch(value):
-    """Render an epoch-seconds value as a local timestamp, or an em dash."""
+    """Render an epoch-seconds value as a local timestamp, or a dash."""
     if value is None:
-        return "\u2014"
+        return "-"
     try:
         return datetime.fromtimestamp(float(value)).strftime("%Y-%m-%d %H:%M:%S")
     except (TypeError, ValueError, OSError, OverflowError):
-        return "\u2014"
+        return "-"
 
 
 def _status_view(state):

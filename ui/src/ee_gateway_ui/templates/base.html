@@ -4,21 +4,28 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
   <title>{% block title %}EE Gateway{% endblock %}</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link rel="stylesheet"
-        href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500&display=swap">
+  <link rel="icon" href="{{ url_for('static', filename='favicon.svg') }}" type="image/svg+xml">
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body>
   <div class="frame">
     <header class="topbar">
       <div class="brand">
-        <span class="brand-mark" aria-hidden="true"></span>
-        <span class="brand-name">EE&thinsp;/&thinsp;GATEWAY</span>
+        {# EE brand mark. Exact path geometry per brand guide. #}
+        <svg class="brand-logo" viewBox="418 275 188 148" xmlns="http://www.w3.org/2000/svg"
+             aria-label="Encrypted Energy" role="img" focusable="false">
+          <g fill="currentColor">
+            <path d="M605.41 376.12 L544.17 323.29 L418.09 370.11 L479.34 422.95 L479.34 374.93 L418.09 322.08 L544.17 275.25 L605.41 328.09 Z"/>
+            <path d="M480.83 346.4 L542.07 399.23 L542.07 351.2 L480.83 298.38 Z"/>
+          </g>
+        </svg>
+        <span class="brand-name">EE<span class="sep">/</span>GATEWAY</span>
       </div>
-      <span class="brand-tag">HUBBLE&nbsp;BLE&nbsp;&middot;&nbsp;v0</span>
+      <div class="topbar-actions">
+        {% block topbar_actions %}<span class="route-chip">/</span>{% endblock %}
+      </div>
     </header>
 
     <main class="content">
@@ -29,6 +36,7 @@
       <span>encryptedenergy.com</span>
       <span class="footer-sep" aria-hidden="true"></span>
       <span>self-hosted gateway</span>
+      {% block footer_status %}{% endblock %}
     </footer>
   </div>
 </body>

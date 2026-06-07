@@ -1,60 +1,70 @@
 {# EE Gateway UI dashboard. GPL-3.0-only; see LICENSE at the repository root. #}
 {% extends "base.html" %}
-{% block title %}Dashboard &middot; EE Gateway{% endblock %}
+{% block title %}Dashboard, EE Gateway{% endblock %}
+{% block topbar_actions %}<span class="route-chip">/</span>{% endblock %}
+{% block footer_status %}
+  <span class="pill pill-{{ status.tone }}">{{ status.label }}</span>
+{% endblock %}
 
 {% block content %}
 <section class="dash">
 
-  <div class="status-strip status-{{ status.tone }} reveal" data-reveal="0">
-    <div class="status-line">
-      <span class="status-dot" aria-hidden="true"></span>
-      <span class="status-label">{{ status.label }}</span>
+  {# 1. Status header. One sentence of truth: are we running, and since when. #}
+  <div class="card status-card reveal" data-reveal="0">
+    <div>
+      <span class="eyebrow">Gateway status</span>
+      <h2 class="card-title">{{ status.label }}</h2>
+      {% if status.error %}
+      <p class="status-sub">{{ status.error }}</p>
+      {% else %}
+      <p class="status-sub">Last worker update: {{ updated }}</p>
+      {% endif %}
     </div>
-    {% if status.error %}
-    <p class="status-detail">{{ status.error }}</p>
-    {% endif %}
-    {% if status.needs_creds %}
-    <a class="status-action" href="{{ url_for('setup') }}">Re-enter credentials &rarr;</a>
-    {% endif %}
+    <div class="status-card-actions">
+      <span class="pill pill-{{ status.tone }}">{{ status.label }}</span>
+      {% if status.needs_creds %}
+      <a class="btn btn-ghost" href="{{ url_for('setup') }}">Re-enter credentials</a>
+      {% endif %}
+    </div>
   </div>
 
-  <div class="readouts">
-    {% for label, value in [
-        ('Packets seen', counts.total),
-        ('Ingested', counts.ingested),
-        ('Pending', counts.pending),
-        ('Devices', counts.devices)] %}
-    <div class="readout reveal" data-reveal="{{ loop.index }}">
-      <span class="readout-value">{{ value if value is not none else '\u2014' }}</span>
-      <span class="readout-label">{{ label }}</span>
+  {# 2. Four KPI tiles. Devices counter is the lime accent (the headline number). #}
+  <div class="kpis">
+    {% for label, value, accent in [
+        ('In range', counts.devices, true),
+        ('Packets',  counts.total,    false),
+        ('Ingested', counts.ingested, false),
+        ('Pending',  counts.pending,  false)] %}
+    <div class="kpi {% if accent %}kpi-accent{% endif %} reveal" data-reveal="{{ loop.index }}">
+      <span class="kpi-label">{{ label }}</span>
+      <span class="kpi-value">{{ value if value is not none else '-' }}</span>
     </div>
     {% endfor %}
   </div>
 
-  <div class="table-block reveal" data-reveal="5">
-    <div class="table-head">
-      <h2 class="table-title">Devices in range</h2>
+  {# 3. Device table. #}
+  <div class="card table-card reveal" data-reveal="5">
+    <div class="table-head-row">
+      <h3 class="table-title">Devices in range</h3>
       <a class="link-quiet" href="{{ url_for('index') }}">Refresh</a>
     </div>
     {% if devices %}
     <table class="data-table">
       <thead>
         <tr>
-          <th>EID</th>
-          <th class="num">Packets</th>
-          <th>First seen</th>
-          <th>Last seen</th>
+          <th>Device</th>
           <th class="num">RSSI</th>
+          <th>First seen</th>
+          <th class="num">Last seen</th>
         </tr>
       </thead>
       <tbody>
         {% for d in devices %}
         <tr>
           <td class="mono">{{ d.eid }}</td>
-          <td class="num">{{ d.packets }}</td>
+          <td class="num">{{ d.last_rssi if d.last_rssi is not none else '-' }}</td>
           <td class="mono dim">{{ d.first_seen }}</td>
-          <td class="mono dim">{{ d.last_seen }}</td>
-          <td class="num">{{ d.last_rssi if d.last_rssi is not none else '\u2014' }}</td>
+          <td class="num dim">{{ d.last_seen }}</td>
         </tr>
         {% endfor %}
       </tbody>
@@ -67,7 +77,7 @@
   </div>
 
   <div class="dash-foot reveal" data-reveal="6">
-    <span>Last worker update: {{ updated }}</span>
+    <span>Auto refreshes when you reload</span>
     <a class="link-quiet" href="{{ url_for('setup') }}">Reconfigure</a>
   </div>
 
