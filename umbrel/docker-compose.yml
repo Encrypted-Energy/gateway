@@ -45,7 +45,7 @@ services:
   # no added capabilities, no Bluetooth access. Runs as uid 1000 (set in the
   # image). init: true so SIGTERM reaches Flask for a clean shutdown.
   ui:
-    image: encryptedenergy/ee-gateway-ui:0.1.0
+    image: encryptedenergy/ee-gateway-ui:0.2.0
     init: true
     depends_on:
       init_perms:

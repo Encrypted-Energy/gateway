@@ -15,12 +15,13 @@ name: EE Gateway
 tagline: Self-hosted Hubble Network Bluetooth gateway
 icon: https://raw.githubusercontent.com/Encrypted-Energy/umbrel-community-app-store/main/encryptedenergy-ee-gateway/icon.svg
 category: Networking
-version: "0.1.2"
+version: "0.2.0"
 releaseNotes: >-
-  Brand refresh. New app icon and screenshots aligned to the Encrypted Energy
-  brand (Sea Green and Polar palette, Inter type, official EE mark). This is a
-  visual and metadata change only: the containers, images, and behavior are
-  unchanged from 0.1.1, so the gateway keeps running through the update.
+  UI restyle to the Encrypted Energy brand (Sea Green base, Polar text,
+  POP Lime primary action, Inter type, on-brand SVG mark). Self-hosted UI
+  with no CDN dependency. Worker, image topology, ports, and behavior are
+  unchanged from 0.1.x: the gateway keeps running through the update and
+  re-reads your existing config.
 port: 8080
 description: >-
   EE Gateway turns your Umbrel into a self-hosted Hubble Network Bluetooth
