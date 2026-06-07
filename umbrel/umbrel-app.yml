@@ -1,4 +1,4 @@
-# EE Gateway — Umbrel app manifest
+# EE Gateway: Umbrel app manifest
 # Copyright (C) 2026 encryptedenergy.com
 # SPDX-License-Identifier: GPL-3.0-only
 #
@@ -6,22 +6,21 @@
 # encryptedenergy community app store, so the id is prefixed with that store id
 # (store id "encryptedenergy" + app "ee-gateway" => "encryptedenergy-ee-gateway").
 #
-# The icon and gallery URLs point at the community-app-store repo where this
-# folder is published (see umbrel/ -> Step 10). They resolve once that repo is
-# pushed; until then they 404, which is expected pre-publish.
+# The icon and gallery URLs point at this community app store repo (org
+# Encrypted-Energy, branch main), where this folder is published. They are
+# live and return HTTP 200.
 manifestVersion: 1
 id: encryptedenergy-ee-gateway
 name: EE Gateway
 tagline: Self-hosted Hubble Network Bluetooth gateway
 icon: https://raw.githubusercontent.com/Encrypted-Energy/umbrel-community-app-store/main/encryptedenergy-ee-gateway/icon.svg
 category: Networking
-version: "0.1.1"
+version: "0.1.2"
 releaseNotes: >-
-  Fixes a first-run permission error on the shared data volume. A one-time init
-  step now sets ownership of /data so the worker and UI, both non-root, can
-  write their database, config, and status files. The worker also gains an
-  on-failure restart so a transient Bluetooth or D-Bus error recovers on its
-  own. No image changes; both containers stay non-root with no privileged mode.
+  Brand refresh. New app icon and screenshots aligned to the Encrypted Energy
+  brand (Sea Green and Polar palette, Inter type, official EE mark). This is a
+  visual and metadata change only: the containers, images, and behavior are
+  unchanged from 0.1.1, so the gateway keeps running through the update.
 port: 8080
 description: >-
   EE Gateway turns your Umbrel into a self-hosted Hubble Network Bluetooth
