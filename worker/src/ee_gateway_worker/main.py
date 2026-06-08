@@ -41,11 +41,9 @@ import threading
 import time
 
 from hubblenetwork import ble
-from hubblenetwork.errors import HubbleError, InvalidCredentialsError
-from hubblenetwork.org import Organization
-from hubblenetwork.packets import EncryptedPacket, Location
+from hubblenetwork.errors import HubbleError
 
-from ee_gateway_worker import config, db, heartbeat
+from ee_gateway_worker import config, db, ee_client, heartbeat
 
 log = logging.getLogger("ee_gateway_worker")
 
@@ -95,19 +93,22 @@ def _flatten(packet) -> dict:
     }
 
 
-def _rebuild_encrypted(raw: str) -> EncryptedPacket:
-    """Reconstruct a minimal ``EncryptedPacket`` from a stored ``raw`` JSON.
+def _rebuild_for_ee(raw: str) -> dict:
+    """Reconstruct the fields EE's ingest endpoint needs from stored JSON.
 
-    Only the fields ``cloud.ingest_packet`` actually reads are restored:
-    ``payload``, ``rssi``, ``timestamp`` and a placeholder ``location``.
+    The worker stores the SDK packet's raw fields and rebuilds the minimal
+    shape EE's ``POST /api/v1/gateways/packets`` expects. Coordinates default
+    to (90, 0) for parity with the Hubble SDK's placeholder. Gateway 0.5.0
+    will replace these with live GPS reads.
     """
     fields = json.loads(raw)
-    return EncryptedPacket(
-        timestamp=fields.get("timestamp") or int(time.time()),
-        location=Location(lat=90, lon=0, fake=True),
-        payload=base64.b64decode(fields["payload_b64"]),
-        rssi=fields.get("rssi") or 0,
-    )
+    return {
+        "payload_b64": fields["payload_b64"],
+        "rssi": fields.get("rssi") or 0,
+        "timestamp": fields.get("timestamp") or int(time.time()),
+        "latitude": 90.0,
+        "longitude": 0.0,
+    }
 
 
 # --- state file ------------------------------------------------------------
@@ -176,16 +177,22 @@ def scan_loop() -> None:
 # --- ingest loop -----------------------------------------------------------
 
 def ingest_loop() -> None:
-    """Drain pending packets to the Hubble cloud.
+    """Drain pending packets to encryptedenergy.com for proxy ingest to Hubble.
 
-    Opens its own SQLite connection (see ``scan_loop``). The ``Organization``
-    is built lazily and rebuilt on credential change, because its constructor
-    makes network calls and can fail — that belongs inside the loop that can
-    surface the failure, not at startup.
+    The worker no longer talks to Hubble directly. EE owns the wholesale
+    Hubble relationship; the worker just POSTs each packet to
+    ``${EE_BASE_URL}/api/v1/gateways/packets`` with its EE bearer token.
+
+    Failure handling:
+
+    * IngestTerminal (HTTP 4xx)  EE rejected the packet. Mark it skipped so
+      it leaves the pending queue. Common cause: token revoked.
+    * IngestTransient (network or 5xx)  leave the packet pending; the next
+      pass retries.
+
+    Opens its own SQLite connection (see ``scan_loop``).
     """
     conn = db.connect(DB_PATH)
-    org: Organization | None = None
-    org_key: tuple[str, str] | None = None
 
     while not _stop.is_set():
         try:
@@ -193,16 +200,6 @@ def ingest_loop() -> None:
         except config.ConfigError:
             _stop.wait(INGEST_POLL_SECONDS)
             continue
-
-        if org_key != (cfg.org_id, cfg.api_token):
-            try:
-                org = Organization(org_id=cfg.org_id, api_token=cfg.api_token)
-                org_key = (cfg.org_id, cfg.api_token)
-            except (InvalidCredentialsError, HubbleError) as exc:
-                log.error("cloud login failed: %s", exc)
-                _write_state(conn, status="auth_error", error=str(exc))
-                _stop.wait(30)
-                continue
 
         for row in db.pending_packets(conn, limit=INGEST_BATCH):
             if _stop.is_set():
@@ -212,11 +209,34 @@ def ingest_loop() -> None:
                 # so they leave the pending queue instead of being retried.
                 db.mark_skipped(conn, row["id"], "not ingestable")
                 continue
+
+            packet = _rebuild_for_ee(row["raw"])
             try:
-                org.ingest_packet(_rebuild_encrypted(row["raw"]))
+                ee_client.ingest_packet(
+                    base_url=cfg.ee_base_url,
+                    api_token=cfg.api_token,
+                    payload_b64=packet["payload_b64"],
+                    rssi=packet["rssi"],
+                    timestamp=packet["timestamp"],
+                    latitude=packet["latitude"],
+                    longitude=packet["longitude"],
+                )
                 db.mark_ingested(conn, row["id"])
-            except HubbleError as exc:
-                # Transient (network, backend) — leave pending for next pass.
+            except ee_client.IngestUnauthorized as exc:
+                # 401 specifically: token invalid or revoked. Drop the
+                # packet and flip the worker into auth_error so the
+                # dashboard surfaces the credential problem.
+                db.mark_skipped(conn, row["id"], str(exc))
+                log.warning("EE rejected packet %d: %s", row["id"], exc)
+                _write_state(conn, status="auth_error", error=str(exc))
+            except ee_client.IngestTerminal as exc:
+                # Other 4xx (e.g. 422 malformed). Drop the packet but do
+                # not change worker state: the credentials are fine, this
+                # is a per-packet data issue we cannot resolve by retrying.
+                db.mark_skipped(conn, row["id"], str(exc))
+                log.warning("EE dropped packet %d: %s", row["id"], exc)
+            except ee_client.IngestTransient as exc:
+                # Network or 5xx. Leave pending; the next pass retries.
                 db.mark_ingest_error(conn, row["id"], str(exc))
                 log.warning("ingest failed for packet %d: %s", row["id"], exc)
 

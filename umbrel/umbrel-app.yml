@@ -15,11 +15,14 @@ name: EE Gateway
 tagline: Self-hosted Hubble Network Bluetooth gateway
 icon: https://raw.githubusercontent.com/Encrypted-Energy/umbrel-community-app-store/main/encryptedenergy-ee-gateway/icon.svg
 category: Networking
-version: "0.3.0"
+version: "0.4.0"
 releaseNotes: >-
-  The gateway now reports a periodic liveness heartbeat to encryptedenergy.com
-  so your gateway page shows real activity instead of "Never". No change to BLE
-  scanning or Hubble ingest. The UI container is unchanged from 0.2.0.
+  Pivot ingest path. The gateway now forwards scanned packets to
+  encryptedenergy.com, which proxies them to the Hubble Network on your
+  behalf. You only need an EE account, no Hubble account is required. The
+  setup wizard accepts ee_org_ and ee_live_ credentials from your gateway
+  page on encryptedenergy.com. After updating, paste your EE credentials
+  to keep ingesting.
 port: 8080
 description: >-
   EE Gateway turns your Umbrel into a self-hosted Hubble Network Bluetooth

@@ -112,14 +112,25 @@ def load(config_path: str | Path) -> Config:
             return file_data[file_key]
         return default
 
-    org_id = pick("HUBBLE_ORG_ID", "org_id")
-    api_token = pick("HUBBLE_API_TOKEN", "api_token")
+    # EE_* are the canonical env var names from 0.4.0 onward. HUBBLE_* still
+    # work for back-compat with installs created before the pivot. Env value
+    # wins over file value; either canonical or legacy env name is accepted.
+    org_id = (
+        os.environ.get("EE_ORG_ID")
+        or os.environ.get("HUBBLE_ORG_ID")
+        or file_data.get("org_id")
+    )
+    api_token = (
+        os.environ.get("EE_API_TOKEN")
+        or os.environ.get("HUBBLE_API_TOKEN")
+        or file_data.get("api_token")
+    )
     if not org_id or not api_token:
         missing = []
         if not org_id:
-            missing.append("org_id (HUBBLE_ORG_ID)")
+            missing.append("org_id (EE_ORG_ID)")
         if not api_token:
-            missing.append("api_token (HUBBLE_API_TOKEN)")
+            missing.append("api_token (EE_API_TOKEN)")
         raise ConfigError("missing required credential(s): " + ", ".join(missing))
 
     scan_interval = _coerce_int(

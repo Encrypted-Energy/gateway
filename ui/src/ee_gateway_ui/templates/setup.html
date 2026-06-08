@@ -8,10 +8,11 @@
   <div class="card-head">
     <div class="card-head-text">
       <span class="eyebrow">{% if configured %}Reconfigure{% else %}Step 1 of 1{% endif %}</span>
-      <h1 class="card-title">Connect to Hubble</h1>
+      <h1 class="card-title">Connect to Encrypted Energy</h1>
       <p class="card-sub">
-        Enter your organization ID and API token. The gateway starts forwarding
-        BLE packets as soon as it authenticates.
+        Paste the organization ID and API token from your gateway page on
+        encryptedenergy.com. EE forwards your packets to the Hubble Network
+        on your behalf.
       </p>
     </div>
   </div>
@@ -24,14 +25,14 @@
     <label class="field">
       <span class="field-label">Organization ID</span>
       <input class="field-input" type="text" name="org_id" value="{{ org_id }}"
-             placeholder="org-7f3a9c21" spellcheck="false"
+             placeholder="ee_org_xxxxxxxxxxxxxxxxxxxxxx" spellcheck="false"
              autocomplete="off" required>
     </label>
 
     <label class="field">
       <span class="field-label">API token</span>
       <input class="field-input" type="password" name="api_token"
-             placeholder="paste your Hubble API token" spellcheck="false"
+             placeholder="ee_live_..." spellcheck="false"
              autocomplete="off" required>
       <span class="field-hint">
         {% if configured %}
