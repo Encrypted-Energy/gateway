@@ -34,7 +34,7 @@ services:
   # extra download, and it is the only place root is used. This is NOT privileged
   # mode; the app containers themselves stay non-root.
   init_perms:
-    image: encryptedenergy/ee-gateway-worker:0.4.0
+    image: encryptedenergy/ee-gateway-worker:0.5.0
     user: "0:0"
     entrypoint: ["sh", "-c", "chown -R 1000:1000 /data"]
     restart: "no"
@@ -58,11 +58,14 @@ services:
       EE_DATA_DIR: /data
       EE_UI_PORT: 8080
 
-  # BLE scan + Hubble cloud ingest worker. It reaches the host's Bluetooth radio
-  # through bluetoothd over the D-Bus system bus, and makes outbound HTTPS calls
-  # to api.hubble.com. Runs as uid 1000 (set in the image).
+  # BLE scan + GPS-stamped cloud ingest worker. It reaches the host's
+  # Bluetooth radio through bluetoothd over the D-Bus system bus, talks to
+  # a bundled gpsd against a USB GPS dongle for per-packet coordinates,
+  # and makes outbound HTTPS calls to encryptedenergy.com. The Python
+  # process runs as uid 1000; gpsd starts as root only to open the
+  # serial device, then drops to user nobody.
   worker:
-    image: encryptedenergy/ee-gateway-worker:0.4.0
+    image: encryptedenergy/ee-gateway-worker:0.5.0
     init: true
     # Wait for the one-time ownership fix, then self-heal on any non-zero exit
     # (a transient radio or D-Bus error, or a start that raced init_perms). In
@@ -73,18 +76,40 @@ services:
     depends_on:
       init_perms:
         condition: service_completed_successfully
-    # Host networking gives the container direct use of the host Bluetooth stack
-    # and a normal outbound route to the Hubble cloud.
+    # Host networking gives the container direct use of the host Bluetooth
+    # stack and a normal outbound route to encryptedenergy.com. Note: gpsd
+    # inside the container binds 127.0.0.1:2947 on the *host* because of
+    # this. If umbrelOS ever ships its own gpsd in a future release we
+    # will need to either move worker off host networking (and add a
+    # bluetoothd unix-domain shim) or pick a non-default port via
+    # gpsd -S; today no other umbrelOS app uses gpsd.
     network_mode: host
-    # The only privilege grant: NET_ADMIN + NET_RAW let the BLE stack manage and
-    # read from the radio. Deliberately NO `privileged: true`.
+    # The only privilege grant for BLE: NET_ADMIN + NET_RAW let the
+    # Bluetooth stack manage and read from the radio. Deliberately NO
+    # `privileged: true`.
     cap_add:
       - NET_ADMIN
       - NET_RAW
+    # USB device access for the GPS dongle. Two cgroup major numbers cover
+    # the dongles in our hardware guide: 188 is the standard USB serial
+    # range (PL2303/FTDI chipsets, e.g. GlobalSat BU-353-S4 → ttyUSB*); 166
+    # is CDC ACM (u-blox NEO USB modules → ttyACM*). Mounting /dev/bus/usb
+    # lets the kernel expose newly plugged-in dongles to the container
+    # without a restart. EE_GPS_DEVICE in environment selects which node
+    # gpsd opens; the default in the image is /dev/ttyUSB0.
+    device_cgroup_rules:
+      - 'c 188:* rwm'
+      - 'c 166:* rwm'
     volumes:
       - ${APP_DATA_DIR}/data:/data
       # D-Bus system bus, read-only: the worker speaks to the host bluetoothd
       # over the bus but never needs to write the bus directory.
       - /var/run/dbus:/var/run/dbus:ro
+      # USB bus, so hot-plugging a GPS dongle works without restarting the
+      # app. Read-only is fine: gpsd opens the resulting /dev/tty* node
+      # directly, not /dev/bus/usb.
+      - /dev/bus/usb:/dev/bus/usb:ro
     environment:
       EE_DATA_DIR: /data
+      # Override here if your dongle enumerates as /dev/ttyACM0 (u-blox).
+      EE_GPS_DEVICE: /dev/ttyUSB0

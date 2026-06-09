@@ -2,13 +2,16 @@
 # Copyright (C) 2026 encryptedenergy.com
 # SPDX-License-Identifier: GPL-3.0-only
 #
-# Scans for Hubble Network BLE packets and ingests them to the Hubble cloud.
-# Built for linux/arm64 (Raspberry Pi / Umbrel Home) and linux/amd64.
+# Scans for Hubble Network BLE packets and forwards them to
+# encryptedenergy.com (which proxies to the Hubble cloud). 0.5.0 also
+# embeds a local gpsd so the worker can stamp each packet with a real GPS
+# fix from a USB GPS dongle. Built for linux/arm64 (Raspberry Pi / Umbrel
+# Home) and linux/amd64.
 
 FROM python:3.12-slim-bookworm
 
 LABEL org.opencontainers.image.title="EE Gateway Worker"
-LABEL org.opencontainers.image.description="Hubble Network BLE gateway — scan and cloud ingest worker"
+LABEL org.opencontainers.image.description="Hubble Network BLE gateway — scan, GPS, and cloud ingest worker"
 LABEL org.opencontainers.image.source="https://github.com/encryptedenergy/ee-gateway"
 LABEL org.opencontainers.image.licenses="GPL-3.0-only"
 
@@ -17,18 +20,30 @@ LABEL org.opencontainers.image.licenses="GPL-3.0-only"
 # PYTHONDONTWRITEBYTECODE: keep the image free of .pyc files.
 # EE_DATA_DIR: shared Umbrel app-data dir holding config.json, packets.db,
 #   and state.json. The UI container mounts the same path.
+# EE_GPS_DEVICE: serial device the entrypoint passes to gpsd. Defaults to
+#   /dev/ttyUSB0 (PL2303-class USB GPS like the GlobalSat BU-353-S4);
+#   override via the compose `environment:` if your dongle is on
+#   /dev/ttyACM0 (u-blox NEO USB).
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
-    EE_DATA_DIR=/data
+    EE_DATA_DIR=/data \
+    EE_GPS_DEVICE=/dev/ttyUSB0
 
-# ca-certificates is needed for the HTTPS calls to api.hubble.com.
-# No BlueZ packages are installed in the image on purpose: BLE scanning is done
-# by the host's bluetoothd, which the worker reaches over the D-Bus system bus
-# socket bind-mounted at /var/run/dbus by docker-compose. The Python BLE stack
-# (bleak -> dbus-fast) speaks the D-Bus wire protocol directly, so the
-# container needs no Bluetooth userspace of its own.
+# ca-certificates: needed for HTTPS to encryptedenergy.com.
+# gpsd + gpsd-clients: local GPS daemon and gpspipe (the latter is only used
+#   for debugging; pulled in by the gpsd-clients meta).
+# gosu: tiny setuid binary used by the entrypoint to drop from root (needed
+#   to open the GPS serial device) to the unprivileged ee user before exec'ing
+#   the Python worker.
+# No BlueZ packages are installed: BLE scanning goes through the host's
+# bluetoothd over the D-Bus system bus socket bind-mounted at /var/run/dbus
+# by docker-compose.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates \
+    && apt-get install -y --no-install-recommends \
+         ca-certificates \
+         gpsd \
+         gpsd-clients \
+         gosu \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -41,16 +56,19 @@ COPY pyproject.toml ./
 COPY src ./src
 RUN pip install --no-cache-dir .
 
-# Run as a non-root user. The privileged BLE work happens in the host
-# bluetoothd over D-Bus, so the container process itself never needs root.
-# uid 1000 matches Umbrel's convention.
+# Create the unprivileged user the Python process will run as. We no longer
+# `USER ee` at the Dockerfile level because the entrypoint needs to start
+# gpsd as root (to open the serial device, then gpsd self-drops to nobody)
+# before dropping to ee with gosu.
 RUN useradd --create-home --uid 1000 ee \
     && mkdir -p /data \
     && chown -R ee:ee /data
-USER ee
+
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
 
 VOLUME ["/data"]
 
-# main() starts the cloud-ingest thread and runs the BLE scan loop on the main
-# thread until it receives SIGTERM/SIGINT.
-ENTRYPOINT ["python", "-m", "ee_gateway_worker.main"]
+# Entry: launch gpsd (if a GPS device is present), then exec the Python
+# worker as uid 1000.
+ENTRYPOINT ["/entrypoint.sh"]

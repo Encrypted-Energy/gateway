@@ -15,14 +15,17 @@ name: EE Gateway
 tagline: Self-hosted Hubble Network Bluetooth gateway
 icon: https://raw.githubusercontent.com/Encrypted-Energy/umbrel-community-app-store/main/encryptedenergy-ee-gateway/icon.svg
 category: Networking
-version: "0.4.0"
+version: "0.5.0"
 releaseNotes: >-
-  Pivot ingest path. The gateway now forwards scanned packets to
-  encryptedenergy.com, which proxies them to the Hubble Network on your
-  behalf. You only need an EE account, no Hubble account is required. The
-  setup wizard accepts ee_org_ and ee_live_ credentials from your gateway
-  page on encryptedenergy.com. After updating, paste your EE credentials
-  to keep ingesting.
+  GPS support. Plug a USB GPS dongle into your Umbrel and the gateway
+  stamps every forwarded packet with a real coordinate read from the
+  dongle. The included gpsd works out of the box with PL2303-class
+  dongles like the GlobalSat BU-353-S4 (default), and with u-blox NEO
+  USB modules after setting EE_GPS_DEVICE=/dev/ttyACM0. Your gateway
+  page on encryptedenergy.com now shows a live GPS status pill and two
+  counters: packets forwarded, and packets dropped because there was no
+  GPS fix yet. Packets received before the first fix are dropped, since
+  the upstream network rejects packets without coordinates.
 port: 8080
 description: >-
   EE Gateway turns your Umbrel into a self-hosted Hubble Network Bluetooth

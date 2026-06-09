@@ -43,7 +43,7 @@ import time
 from hubblenetwork import ble
 from hubblenetwork.errors import HubbleError
 
-from ee_gateway_worker import config, db, ee_client, heartbeat
+from ee_gateway_worker import config, counters, db, ee_client, gps, heartbeat
 
 log = logging.getLogger("ee_gateway_worker")
 
@@ -61,15 +61,24 @@ INGEST_BATCH = 50
 # Set by the SIGTERM/SIGINT handler; both loops watch it and exit cleanly.
 _stop = threading.Event()
 
+# Shared in-process singletons. Wired up in ``main()`` and passed to each
+# loop; module-level so test code can patch them out if needed.
+_gps: gps.GpsClient | None = None
+_counters: counters.CountersStore | None = None
+
 
 # --- packet flattening -----------------------------------------------------
 
-def _flatten(packet) -> dict:
+def _flatten(packet, fix: gps.GpsFix | None = None) -> dict:
     """Turn an SDK packet object into a plain row dict for ``db.insert_packet``.
 
     Keys: ``raw`` (JSON string), ``eid`` (hex string or None), ``rssi``,
     ``packet_type`` (SDK class name). ``raw`` always carries the base64
-    ``payload`` and ``timestamp`` so the ingest loop can rebuild the packet.
+    ``payload`` and ``timestamp``; when a GPS ``fix`` is passed in, ``raw``
+    also carries the ``latitude`` and ``longitude`` at scan time. The fix
+    is captured at scan time on purpose: a moving gateway (think Pi in a
+    vehicle) needs the coordinate from when the packet was heard, not when
+    we got around to forwarding it.
     """
     packet_type = type(packet).__name__
     payload = getattr(packet, "payload", b"") or b""
@@ -79,6 +88,9 @@ def _flatten(packet) -> dict:
         "timestamp": getattr(packet, "timestamp", None),
         "protocol_version": getattr(packet, "protocol_version", None),
     }
+    if fix is not None:
+        fields["latitude"] = fix.lat
+        fields["longitude"] = fix.lon
     # eid is an int on the packet types that have one; store it as hex so the
     # dashboard and the eid index get a stable string key.
     eid_int = getattr(packet, "eid", None)
@@ -93,21 +105,25 @@ def _flatten(packet) -> dict:
     }
 
 
-def _rebuild_for_ee(raw: str) -> dict:
+def _rebuild_for_ee(raw: str) -> dict | None:
     """Reconstruct the fields EE's ingest endpoint needs from stored JSON.
 
-    The worker stores the SDK packet's raw fields and rebuilds the minimal
-    shape EE's ``POST /api/v1/gateways/packets`` expects. Coordinates default
-    to (90, 0) for parity with the Hubble SDK's placeholder. Gateway 0.5.0
-    will replace these with live GPS reads.
+    Returns ``None`` if the stored packet has no embedded coordinates (left
+    over from a 0.4.0 worker, or stored before the first GPS fix). The
+    caller should mark such rows skipped, not retry them — Hubble rejects
+    packets without coordinates so re-sending will never succeed.
     """
     fields = json.loads(raw)
+    lat = fields.get("latitude")
+    lon = fields.get("longitude")
+    if lat is None or lon is None:
+        return None
     return {
         "payload_b64": fields["payload_b64"],
         "rssi": fields.get("rssi") or 0,
         "timestamp": fields.get("timestamp") or int(time.time()),
-        "latitude": 90.0,
-        "longitude": 0.0,
+        "latitude": float(lat),
+        "longitude": float(lon),
     }
 
 
@@ -159,8 +175,21 @@ def scan_loop() -> None:
             _stop.wait(cfg.scan_interval)
             continue
 
+        # Capture a single GPS fix per scan cycle. Within one scan window
+        # (typically 10s) the gateway has not moved meaningfully, so reusing
+        # one fix for every packet in the batch is both correct and cheap.
+        fix = _gps.current_fix() if _gps is not None else None
+        stored = 0
+        dropped_no_fix = 0
         for packet in packets:
-            row = _flatten(packet)
+            if fix is None:
+                # Hubble rejects packets without coordinates and we have no
+                # graceful way to backfill a location later. Drop now, surface
+                # the count in the heartbeat, and let the dashboard explain
+                # why to the operator.
+                dropped_no_fix += 1
+                continue
+            row = _flatten(packet, fix=fix)
             db.insert_packet(
                 conn,
                 raw=row["raw"],
@@ -168,8 +197,13 @@ def scan_loop() -> None:
                 rssi=row["rssi"],
                 packet_type=row["packet_type"],
             )
-        if packets:
-            log.info("stored %d packet(s)", len(packets))
+            stored += 1
+        if dropped_no_fix and _counters is not None:
+            _counters.add_dropped_no_fix(dropped_no_fix)
+        if stored:
+            log.info("stored %d packet(s)", stored)
+        if dropped_no_fix:
+            log.info("dropped %d packet(s): no GPS fix", dropped_no_fix)
         _write_state(conn, status="running")
         _stop.wait(cfg.scan_interval)
 
@@ -211,6 +245,13 @@ def ingest_loop() -> None:
                 continue
 
             packet = _rebuild_for_ee(row["raw"])
+            if packet is None:
+                # Stored before the gateway had a GPS fix, or by a 0.4.0
+                # worker that did not embed coordinates. Either way the
+                # packet is unforwardable; mark it skipped so it leaves
+                # the pending queue.
+                db.mark_skipped(conn, row["id"], "no coordinates stored")
+                continue
             try:
                 ee_client.ingest_packet(
                     base_url=cfg.ee_base_url,
@@ -222,6 +263,8 @@ def ingest_loop() -> None:
                     longitude=packet["longitude"],
                 )
                 db.mark_ingested(conn, row["id"])
+                if _counters is not None:
+                    _counters.add_forwarded()
             except ee_client.IngestUnauthorized as exc:
                 # 401 specifically: token invalid or revoked. Drop the
                 # packet and flip the worker into auth_error so the
@@ -263,7 +306,12 @@ def heartbeat_loop() -> None:
             _stop.wait(30)
             continue
 
-        heartbeat.report(base_url=cfg.ee_base_url, api_token=cfg.api_token)
+        heartbeat.report(
+            base_url=cfg.ee_base_url,
+            api_token=cfg.api_token,
+            gps=_gps,
+            counters_store=_counters,
+        )
         _stop.wait(cfg.heartbeat_interval)
 
 
@@ -275,6 +323,8 @@ def _handle_signal(signum, _frame) -> None:
 
 
 def main() -> None:
+    global _gps, _counters
+
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     # The Hubble SDK talks to the cloud over httpx, which logs one INFO line
     # per request. Quiet it to WARNING so the gateway log shows our own events
@@ -286,6 +336,12 @@ def main() -> None:
     conn = db.connect(DB_PATH)
     _write_state(conn, status="starting")
 
+    # GPS reader runs in its own thread and is shared across the scan loop
+    # (reads current fix) and the heartbeat loop (reports status string).
+    _counters = counters.CountersStore()
+    _gps = gps.GpsClient()
+    _gps.start()
+
     ingest = threading.Thread(target=ingest_loop, name="ingest", daemon=True)
     ingest.start()
     beat = threading.Thread(target=heartbeat_loop, name="heartbeat", daemon=True)
@@ -294,6 +350,8 @@ def main() -> None:
         scan_loop()  # runs on the main thread until _stop is set
     finally:
         _stop.set()
+        if _gps is not None:
+            _gps.stop()
         ingest.join(timeout=15)
         beat.join(timeout=5)
         _write_state(conn, status="stopped")

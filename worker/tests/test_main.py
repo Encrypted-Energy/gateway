@@ -5,9 +5,10 @@
 
 """Tests for the pure functions in ee_gateway_worker.main.
 
-The thread loops need real BLE hardware and are verified on-device. ``_flatten``
-and ``_rebuild_encrypted`` are pure and carry the Option A logic (turning an
-SDK packet object into a storable row and back), so they are unit-tested here.
+The thread loops need real BLE hardware and are verified on-device.
+``_flatten`` and ``_rebuild_for_ee`` are pure and carry the Option A
+logic (turning an SDK packet object into a storable row and back), so
+they are unit-tested here.
 """
 
 import base64
@@ -21,8 +22,10 @@ from hubblenetwork.packets import (
 )
 
 from ee_gateway_worker import main
+from ee_gateway_worker.gps import GpsFix
 
 _LOC = Location(lat=90, lon=0, fake=True)
+_FIX = GpsFix(lat=40.7128, lon=-74.0060, at=1700000000.0)
 
 
 def test_flatten_encrypted_packet_extracts_eid_as_hex():
@@ -85,7 +88,7 @@ def test_flatten_aes_eax_packet_extracts_eid():
     assert row["packet_type"] == "AesEaxPacket"
 
 
-def test_rebuild_encrypted_roundtrips_payload_and_rssi():
+def test_rebuild_for_ee_roundtrips_payload_rssi_and_gps_fix():
     original = EncryptedPacket(
         timestamp=1700000000,
         location=_LOC,
@@ -93,17 +96,30 @@ def test_rebuild_encrypted_roundtrips_payload_and_rssi():
         rssi=-37,
         eid=0xABCD,
     )
-    row = main._flatten(original)
-    rebuilt = main._rebuild_encrypted(row["raw"])
-    assert isinstance(rebuilt, EncryptedPacket)
-    assert rebuilt.payload == b"\xde\xad\xbe\xef"
-    assert rebuilt.rssi == -37
-    assert rebuilt.timestamp == 1700000000
-    # ingest_packet reads location.lat / location.lon — must be present.
-    assert rebuilt.location is not None
+    row = main._flatten(original, fix=_FIX)
+    rebuilt = main._rebuild_for_ee(row["raw"])
+    assert rebuilt is not None
+    assert base64.b64decode(rebuilt["payload_b64"]) == b"\xde\xad\xbe\xef"
+    assert rebuilt["rssi"] == -37
+    assert rebuilt["timestamp"] == 1700000000
+    # GPS fix from scan time must round-trip exactly; the ingest endpoint
+    # forwards these to Hubble.
+    assert rebuilt["latitude"] == _FIX.lat
+    assert rebuilt["longitude"] == _FIX.lon
 
 
-def test_rebuild_encrypted_handles_empty_payload():
+def test_rebuild_for_ee_handles_empty_payload():
     pkt = EncryptedPacket(timestamp=1700000000, location=_LOC, payload=b"", rssi=-50)
-    rebuilt = main._rebuild_encrypted(main._flatten(pkt)["raw"])
-    assert rebuilt.payload == b""
+    rebuilt = main._rebuild_for_ee(main._flatten(pkt, fix=_FIX)["raw"])
+    assert rebuilt is not None
+    assert rebuilt["payload_b64"] == ""
+
+
+def test_rebuild_for_ee_returns_none_when_no_gps_fix_stored():
+    # 0.4.0 worker (or 0.5.0 pre-first-fix) stores a row without lat/lon.
+    # _rebuild_for_ee returns None so the caller can skip it instead of
+    # forwarding a coordinate-less packet to a Hubble cloud that would
+    # reject it anyway.
+    pkt = EncryptedPacket(timestamp=1700000000, location=_LOC, payload=b"x", rssi=-30)
+    row = main._flatten(pkt, fix=None)
+    assert main._rebuild_for_ee(row["raw"]) is None
