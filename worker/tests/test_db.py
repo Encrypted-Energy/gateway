@@ -182,6 +182,48 @@ def test_device_summary_window_returns_empty_on_fresh_db(tmp_path):
     assert rows == []
 
 
+# --- vacuum_old_rows (worker housekeeping) ---------------------------------
+
+def test_vacuum_deletes_only_ingested_rows_older_than_retain_days(tmp_path):
+    import time
+    conn = _conn(tmp_path)
+    old_ingested  = db.insert_packet(conn, raw="old-i",  eid="a", rssi=-40,
+                                     scanned_at=time.time() - 86400 * 60)
+    old_pending   = db.insert_packet(conn, raw="old-p",  eid="b", rssi=-40,
+                                     scanned_at=time.time() - 86400 * 60)
+    recent_ingested = db.insert_packet(conn, raw="new-i", eid="c", rssi=-40)
+    db.mark_ingested(conn, old_ingested)
+    db.mark_ingested(conn, recent_ingested)
+    # Force the old ingested row's ingest_at into the past (mark_ingested
+    # uses time.time() under the hood, which is "now").
+    conn.execute("UPDATE packet_log SET ingest_at = ? WHERE id = ?",
+                 (time.time() - 86400 * 60, old_ingested))
+    conn.commit()
+
+    deleted = db.vacuum_old_rows(conn, retain_days=30)
+    assert deleted == 1
+
+    remaining_ids = {r["id"] for r in conn.execute("SELECT id FROM packet_log")}
+    assert old_ingested not in remaining_ids   # deleted
+    assert old_pending in remaining_ids        # pending: never deleted
+    assert recent_ingested in remaining_ids    # within retention
+
+
+def test_vacuum_returns_zero_on_empty_db(tmp_path):
+    assert db.vacuum_old_rows(_conn(tmp_path)) == 0
+
+
+def test_vacuum_leaves_pending_packets_untouched(tmp_path):
+    import time
+    conn = _conn(tmp_path)
+    pid = db.insert_packet(conn, raw="x", eid="a", rssi=-40,
+                           scanned_at=time.time() - 86400 * 365)
+    # Pending packet from a year ago must NOT be deleted, even though
+    # it is far older than the retention window.
+    assert db.vacuum_old_rows(conn, retain_days=30) == 0
+    assert conn.execute("SELECT COUNT(*) FROM packet_log").fetchone()[0] == 1
+
+
 # --- packet_type column ----------------------------------------------------
 
 def test_insert_stores_packet_type(tmp_path):

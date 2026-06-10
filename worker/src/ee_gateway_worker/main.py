@@ -58,6 +58,11 @@ STATE_PATH = os.path.join(DATA_DIR, "state.json")
 INGEST_POLL_SECONDS = 5
 INGEST_BATCH = 50
 
+# Housekeeping: delete already-ingested packets older than this and reclaim
+# disk. Runs at most once per VACUUM_INTERVAL_SECONDS in the heartbeat loop.
+PACKET_RETAIN_DAYS = 30
+VACUUM_INTERVAL_SECONDS = 86_400  # 24h
+
 # Set by the SIGTERM/SIGINT handler; both loops watch it and exit cleanly.
 _stop = threading.Event()
 
@@ -301,6 +306,7 @@ def heartbeat_loop() -> None:
     handled inside heartbeat.report().
     """
     conn = db.connect(DB_PATH)
+    last_vacuum = 0.0  # epoch seconds; 0 forces a check on the first iteration
     try:
         while not _stop.is_set():
             try:
@@ -319,6 +325,24 @@ def heartbeat_loop() -> None:
                 counters_store=_counters,
                 db_conn=conn,
             )
+
+            # Housekeeping. The DELETE is cheap (index on ingested) so we
+            # run it freely; VACUUM is expensive (rewrites the whole DB)
+            # so we only call it when we actually deleted something.
+            now = time.time()
+            if now - last_vacuum > VACUUM_INTERVAL_SECONDS:
+                try:
+                    deleted = db.vacuum_old_rows(conn, retain_days=PACKET_RETAIN_DAYS)
+                    if deleted:
+                        log.info("vacuumed %d packets older than %dd",
+                                 deleted, PACKET_RETAIN_DAYS)
+                        conn.execute("VACUUM")
+                except Exception as exc:  # noqa: BLE001
+                    # Never crash the heartbeat loop on housekeeping
+                    # failure; log and move on. Next 24h tick retries.
+                    log.warning("vacuum failed: %s", exc)
+                last_vacuum = now
+
             _stop.wait(cfg.heartbeat_interval)
     finally:
         conn.close()

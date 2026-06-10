@@ -184,6 +184,32 @@ def device_summary(conn: sqlite3.Connection, limit: int = 100) -> list[sqlite3.R
     ).fetchall()
 
 
+def vacuum_old_rows(
+    conn: sqlite3.Connection, *, retain_days: int = 30
+) -> int:
+    """Delete already-ingested packets older than ``retain_days`` and return
+    the row count removed.
+
+    Safety net for unbounded growth of ``packet_log``: a busy gateway at
+    ~1 packet/sec produces ~2.6M rows/month, and the 24h
+    :func:`device_summary_window` scan starts to slow once the table
+    crosses the low millions. We only delete rows where
+    ``ingested = 1`` so the ingest loop's retry queue is never touched.
+
+    Caller is responsible for running ``VACUUM`` afterwards if it wants
+    the disk space back (we skip VACUUM when nothing was deleted, since
+    it rewrites the whole DB file and is expensive on a Pi).
+    """
+    cutoff = time.time() - (retain_days * 86400)
+    cur = conn.execute(
+        "DELETE FROM packet_log "
+        "WHERE ingested = 1 AND ingest_at IS NOT NULL AND ingest_at < ?",
+        (cutoff,),
+    )
+    conn.commit()
+    return cur.rowcount
+
+
 def device_summary_window(
     conn: sqlite3.Connection,
     *,

@@ -15,13 +15,13 @@ name: EE Gateway
 tagline: Self-hosted Hubble Network Bluetooth gateway
 icon: https://raw.githubusercontent.com/Encrypted-Energy/umbrel-community-app-store/main/encryptedenergy-ee-gateway/icon.svg
 category: Networking
-version: "0.6.0"
+version: "0.6.1"
 releaseNotes: >-
-  Per-device dashboard. Each heartbeat now includes a top-50 rollup of
-  the BLE devices your gateway has heard in the last 24h, with packet
-  counts and signal strength. The list shows up under "Devices heard"
-  on your gateway page at encryptedenergy.com. Plug-and-play with the
-  existing setup, no config changes needed.
+  Housekeeping. The gateway now prunes already-forwarded packets older
+  than 30 days from its local database once per day. Stops the local
+  packet log from growing unbounded on a busy gateway. No setup
+  changes; if you already had 0.6.0 installed, you get the cleanup
+  automatically once your worker upgrades.
 port: 8080
 description: >-
   EE Gateway turns your Umbrel into a self-hosted Hubble Network Bluetooth
