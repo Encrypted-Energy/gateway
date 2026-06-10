@@ -33,16 +33,60 @@ from __future__ import annotations
 import datetime
 import json
 import logging
+import sqlite3
 import urllib.error
 import urllib.request
 
 from ee_gateway_worker import counters as counters_mod
+from ee_gateway_worker import db as db_mod
 from ee_gateway_worker import gps as gps_mod
 
 HEARTBEAT_PATH = "/api/v1/gateways/heartbeat"
 REQUEST_TIMEOUT_SECONDS = 10
+DEVICES_WINDOW_HOURS = 24
+DEVICES_LIMIT = 50
 
 log = logging.getLogger("ee_gateway_worker.heartbeat")
+
+
+def _utc_iso(epoch_seconds: float) -> str:
+    """Format a unix epoch as the ``YYYY-MM-DDTHH:MM:SSZ`` shape the EE
+    heartbeat endpoint expects. Uses an aware datetime to avoid the
+    Python 3.12+ deprecation warning on ``utcfromtimestamp``.
+    """
+    return (
+        datetime.datetime.fromtimestamp(epoch_seconds, tz=datetime.timezone.utc)
+        .strftime("%Y-%m-%dT%H:%M:%SZ")
+    )
+
+
+def _devices_seen_payload(conn: sqlite3.Connection) -> dict:
+    """Build the ``devices_seen`` body field from the local packet store.
+
+    Always returns a dict with a ``devices`` array (possibly empty), so a
+    gateway that has heard nothing in the window still POSTs a snapshot.
+    That distinguishes "no devices in the last 24h" from "worker too old
+    to report devices_seen" on the dashboard.
+    """
+    rows = db_mod.device_summary_window(
+        conn, window_hours=DEVICES_WINDOW_HOURS, limit=DEVICES_LIMIT
+    )
+    now_iso = datetime.datetime.now(tz=datetime.timezone.utc).strftime(
+        "%Y-%m-%dT%H:%M:%SZ"
+    )
+    return {
+        "as_of":         now_iso,
+        "window_hours":  DEVICES_WINDOW_HOURS,
+        "devices": [
+            {
+                "eid":          row["eid"],
+                "packets":      row["packets"],
+                "last_rssi":    row["last_rssi"],
+                "last_seen_at": _utc_iso(row["last_seen"]),
+            }
+            for row in rows
+        ],
+    }
 
 
 def report(
@@ -53,6 +97,7 @@ def report(
     last_known_position_at: str | None = None,
     gps: gps_mod.GpsClient | None = None,
     counters_store: counters_mod.CountersStore | None = None,
+    db_conn: sqlite3.Connection | None = None,
 ) -> dict | None:
     """Send one heartbeat. Returns the parsed JSON response, or ``None`` on failure.
 
@@ -64,8 +109,12 @@ def report(
     snapshot is reset to zero atomically before the POST; on any failure
     response the snapshot is restored so the deltas are not lost.
 
+    ``db_conn``, when provided, contributes ``devices_seen`` (top-N
+    per-EID rollup over the last 24h). Caller must own the connection
+    (sqlite3 forbids cross-thread sharing).
+
     The EE side ignores any of these fields it does not recognise, so
-    this call works against 0.5.x and against the older 0.4.x server.
+    this call works against 0.5.x, 0.7.x, and the older 0.4.x server.
     """
     url = base_url.rstrip("/") + HEARTBEAT_PATH
 
@@ -79,11 +128,20 @@ def report(
         body["gps_status"] = gps.status()
         fix = gps.current_fix()
         if fix is not None:
-            body["last_known_position_at"] = datetime.datetime.utcfromtimestamp(
-                fix.at
-            ).strftime("%Y-%m-%dT%H:%M:%SZ")
+            body["last_known_position_at"] = _utc_iso(fix.at)
     elif last_known_position_at:
         body["last_known_position_at"] = last_known_position_at
+
+    # Devices-seen snapshot. Always include when a db connection is
+    # available, including the empty case: the EE dashboard renders
+    # different copy for "no devices in window" vs "worker never reported"
+    # (NULL column), and we want operators of 0.6.0+ workers to land in
+    # the former bucket as soon as the worker first checks in.
+    if db_conn is not None:
+        try:
+            body["devices_seen"] = _devices_seen_payload(db_conn)
+        except sqlite3.Error as exc:
+            log.warning("could not build devices_seen payload: %s", exc)
 
     # Counter deltas. Snapshotted *now* so a concurrent increment lands in
     # the next heartbeat. If anything goes wrong below we put them back.

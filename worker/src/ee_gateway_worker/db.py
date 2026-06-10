@@ -182,3 +182,36 @@ def device_summary(conn: sqlite3.Connection, limit: int = 100) -> list[sqlite3.R
         "LIMIT ?",
         (limit,),
     ).fetchall()
+
+
+def device_summary_window(
+    conn: sqlite3.Connection,
+    *,
+    window_hours: int = 24,
+    limit: int = 50,
+) -> list[sqlite3.Row]:
+    """Per-EID rollup restricted to packets scanned in the last ``window_hours``.
+
+    Returned columns: ``eid``, ``packets``, ``last_seen``, ``last_rssi``.
+    Rows with a NULL ``eid`` are excluded. Sorted by ``packets`` desc with
+    ``eid`` as a tiebreaker so the result is deterministic across heartbeats
+    (callers POST this verbatim to the EE dashboard and ties otherwise
+    cause the table to reshuffle between ticks).
+
+    Used by the heartbeat loop to build the ``devices_seen`` payload.
+    """
+    since = time.time() - (window_hours * 3600)
+    return conn.execute(
+        "SELECT p1.eid AS eid, "
+        "       COUNT(*) AS packets, "
+        "       MAX(p1.scanned_at) AS last_seen, "
+        "       (SELECT p2.rssi FROM packet_log p2 "
+        "        WHERE p2.eid = p1.eid AND p2.scanned_at >= ? "
+        "        ORDER BY p2.id DESC LIMIT 1) AS last_rssi "
+        "FROM packet_log p1 "
+        "WHERE p1.eid IS NOT NULL AND p1.scanned_at >= ? "
+        "GROUP BY p1.eid "
+        "ORDER BY packets DESC, eid ASC "
+        "LIMIT ?",
+        (since, since, limit),
+    ).fetchall()

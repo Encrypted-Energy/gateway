@@ -125,6 +125,63 @@ def test_device_summary_excludes_null_eid(tmp_path):
     assert eids == ["dev-a"]
 
 
+# --- device_summary_window (used by 0.6.0+ heartbeat) -----------------------
+
+def test_device_summary_window_excludes_packets_older_than_window(tmp_path):
+    import time
+    conn = _conn(tmp_path)
+    now = time.time()
+    # Three rows: two recent, one well outside the 1h window.
+    db.insert_packet(conn, raw="old", eid="dev-old", rssi=-70,
+                     scanned_at=now - 3600 * 5)
+    db.insert_packet(conn, raw="r1", eid="dev-new", rssi=-40,
+                     scanned_at=now - 60)
+    db.insert_packet(conn, raw="r2", eid="dev-new", rssi=-45,
+                     scanned_at=now - 30)
+    rows = db.device_summary_window(conn, window_hours=1)
+    eids = [r["eid"] for r in rows]
+    assert "dev-old" not in eids
+    assert eids == ["dev-new"]
+    assert rows[0]["packets"] == 2
+    assert rows[0]["last_rssi"] == -45  # newest within window
+
+
+def test_device_summary_window_orders_by_packets_then_eid(tmp_path):
+    import time
+    conn = _conn(tmp_path)
+    now = time.time()
+    # b and c tie on packet count; secondary sort by eid must surface b first.
+    db.insert_packet(conn, raw="x", eid="dev-c", rssi=-50, scanned_at=now - 10)
+    db.insert_packet(conn, raw="x", eid="dev-c", rssi=-50, scanned_at=now - 9)
+    db.insert_packet(conn, raw="x", eid="dev-b", rssi=-50, scanned_at=now - 8)
+    db.insert_packet(conn, raw="x", eid="dev-b", rssi=-50, scanned_at=now - 7)
+    db.insert_packet(conn, raw="x", eid="dev-a", rssi=-50, scanned_at=now - 6)
+    rows = db.device_summary_window(conn, window_hours=1)
+    assert [r["eid"] for r in rows] == ["dev-b", "dev-c", "dev-a"]
+
+
+def test_device_summary_window_respects_limit(tmp_path):
+    conn = _conn(tmp_path)
+    for i in range(5):
+        db.insert_packet(conn, raw="x", eid=f"dev-{i}", rssi=-50)
+    rows = db.device_summary_window(conn, window_hours=24, limit=2)
+    assert len(rows) == 2
+
+
+def test_device_summary_window_excludes_null_eid(tmp_path):
+    conn = _conn(tmp_path)
+    db.insert_packet(conn, raw="anon")
+    db.insert_packet(conn, raw="named", eid="dev-a")
+    rows = db.device_summary_window(conn, window_hours=24)
+    assert [r["eid"] for r in rows] == ["dev-a"]
+
+
+def test_device_summary_window_returns_empty_on_fresh_db(tmp_path):
+    conn = _conn(tmp_path)
+    rows = db.device_summary_window(conn, window_hours=24)
+    assert rows == []
+
+
 # --- packet_type column ----------------------------------------------------
 
 def test_insert_stores_packet_type(tmp_path):

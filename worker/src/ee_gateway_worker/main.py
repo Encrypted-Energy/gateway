@@ -291,28 +291,37 @@ def ingest_loop() -> None:
 def heartbeat_loop() -> None:
     """Send a periodic alive signal to encryptedenergy.com.
 
-    Reads the current config every iteration so a credential or interval
-    change in config.json takes effect within one cycle. Skips silently
-    when credentials are missing (setup wizard has not been completed yet),
+    Opens its own SQLite connection (sqlite3 forbids sharing across
+    threads, matching the scan/ingest pattern) so the heartbeat can
+    include a top-N per-EID rollup over the last 24h. Reads the current
+    config every iteration so a credential or interval change in
+    config.json takes effect within one cycle. Skips silently when
+    credentials are missing (setup wizard has not been completed yet),
     rather than crashing the loop. All HTTP failures are non-fatal and
     handled inside heartbeat.report().
     """
-    while not _stop.is_set():
-        try:
-            cfg = config.load(CONFIG_PATH)
-        except config.ConfigError:
-            # No credentials yet; just wait and try again. The scan loop
-            # writes the user-facing state, so we do not duplicate that here.
-            _stop.wait(30)
-            continue
+    conn = db.connect(DB_PATH)
+    try:
+        while not _stop.is_set():
+            try:
+                cfg = config.load(CONFIG_PATH)
+            except config.ConfigError:
+                # No credentials yet; just wait and try again. The scan
+                # loop writes the user-facing state, so we do not
+                # duplicate that here.
+                _stop.wait(30)
+                continue
 
-        heartbeat.report(
-            base_url=cfg.ee_base_url,
-            api_token=cfg.api_token,
-            gps=_gps,
-            counters_store=_counters,
-        )
-        _stop.wait(cfg.heartbeat_interval)
+            heartbeat.report(
+                base_url=cfg.ee_base_url,
+                api_token=cfg.api_token,
+                gps=_gps,
+                counters_store=_counters,
+                db_conn=conn,
+            )
+            _stop.wait(cfg.heartbeat_interval)
+    finally:
+        conn.close()
 
 
 # --- entry point -----------------------------------------------------------
