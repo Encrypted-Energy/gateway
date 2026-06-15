@@ -15,13 +15,15 @@ name: EE Gateway
 tagline: Self-hosted Hubble Network Bluetooth gateway
 icon: https://raw.githubusercontent.com/Encrypted-Energy/umbrel-community-app-store/main/encryptedenergy-ee-gateway/icon.svg
 category: Networking
-version: "0.6.1"
+version: "0.6.2"
 releaseNotes: >-
-  Housekeeping. The gateway now prunes already-forwarded packets older
-  than 30 days from its local database once per day. Stops the local
-  packet log from growing unbounded on a busy gateway. No setup
-  changes; if you already had 0.6.0 installed, you get the cleanup
-  automatically once your worker upgrades.
+  Compose-only fix for USB GPS dongle access. Earlier releases set the
+  cgroup permission to talk to the dongle but did not mount the device
+  node into the container, so the worker reported "GPS dongle not
+  detected" even with a working dongle. The container now bind-mounts
+  the host's /dev so GPS dongles plugged in either before or after
+  install are visible to the worker. No worker code change, same
+  image tag as 0.6.1.
 port: 8080
 description: >-
   EE Gateway turns your Umbrel into a self-hosted Hubble Network Bluetooth

@@ -90,13 +90,25 @@ services:
     cap_add:
       - NET_ADMIN
       - NET_RAW
-    # USB device access for the GPS dongle. Two cgroup major numbers cover
-    # the dongles in our hardware guide: 188 is the standard USB serial
-    # range (PL2303/FTDI chipsets, e.g. GlobalSat BU-353-S4 → ttyUSB*); 166
-    # is CDC ACM (u-blox NEO USB modules → ttyACM*). Mounting /dev/bus/usb
-    # lets the kernel expose newly plugged-in dongles to the container
-    # without a restart. EE_GPS_DEVICE in environment selects which node
-    # gpsd opens; the default in the image is /dev/ttyUSB0.
+    # USB device access for the GPS dongle. Two layers:
+    #
+    # 1) `device_cgroup_rules` grants the container permission to access
+    #    character devices with major 188 (USB serial, e.g. PL2303 ->
+    #    ttyUSB*) and 166 (CDC ACM, e.g. u-blox NEO -> ttyACM*). The
+    #    rule is permission only; without step 2 the device nodes are
+    #    not present inside the container's tmpfs /dev.
+    #
+    # 2) Bind-mounting the host's /dev INTO the container's /dev makes
+    #    the actual device nodes visible. This is broader than a single
+    #    `devices:` entry but matters for two reasons:
+    #      * Survives hot-plug: a USB GPS dongle plugged in AFTER the
+    #        container started becomes visible without rebuilding the
+    #        container.
+    #      * No-dongle install works: the container starts cleanly even
+    #        if no GPS dongle is present at install time (worker reports
+    #        dongle_missing on the dashboard).
+    #    The cgroup_rules above keep the container from actually opening
+    #    any device outside the two allowed majors.
     device_cgroup_rules:
       - 'c 188:* rwm'
       - 'c 166:* rwm'
@@ -105,10 +117,10 @@ services:
       # D-Bus system bus, read-only: the worker speaks to the host bluetoothd
       # over the bus but never needs to write the bus directory.
       - /var/run/dbus:/var/run/dbus:ro
-      # USB bus, so hot-plugging a GPS dongle works without restarting the
-      # app. Read-only is fine: gpsd opens the resulting /dev/tty* node
-      # directly, not /dev/bus/usb.
-      - /dev/bus/usb:/dev/bus/usb:ro
+      # Full /dev passthrough so the GPS dongle's tty node is visible to
+      # the container at the path EE_GPS_DEVICE points at. See the
+      # block-comment above for why this is broader than `devices:`.
+      - /dev:/dev
     environment:
       EE_DATA_DIR: /data
       # Override here if your dongle enumerates as /dev/ttyACM0 (u-blox).
