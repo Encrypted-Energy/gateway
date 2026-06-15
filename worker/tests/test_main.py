@@ -123,3 +123,24 @@ def test_rebuild_for_ee_returns_none_when_no_gps_fix_stored():
     pkt = EncryptedPacket(timestamp=1700000000, location=_LOC, payload=b"x", rssi=-30)
     row = main._flatten(pkt, fix=None)
     assert main._rebuild_for_ee(row["raw"]) is None
+
+
+# --- restart signal (0.6.3+) -----------------------------------------------
+
+def test_consume_restart_signal_returns_false_when_absent(tmp_path, monkeypatch):
+    """No sentinel file -> _consume_restart_signal is a no-op false."""
+    monkeypatch.setattr(main, "RESTART_SIGNAL_PATH", str(tmp_path / ".restart_requested"))
+    assert main._consume_restart_signal() is False
+
+
+def test_consume_restart_signal_returns_true_and_deletes(tmp_path, monkeypatch):
+    """Sentinel present -> returns True and removes the file so the
+    request is honored exactly once."""
+    signal_path = tmp_path / ".restart_requested"
+    signal_path.touch()
+    monkeypatch.setattr(main, "RESTART_SIGNAL_PATH", str(signal_path))
+
+    assert main._consume_restart_signal() is True
+    assert not signal_path.exists()
+    # Second call sees no file.
+    assert main._consume_restart_signal() is False

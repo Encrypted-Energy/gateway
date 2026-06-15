@@ -37,6 +37,7 @@ import json
 import logging
 import os
 import signal
+import sys
 import threading
 import time
 
@@ -50,6 +51,12 @@ log = logging.getLogger("ee_gateway_worker")
 # Paths inside the shared Umbrel app data directory. Overridable for local dev.
 DATA_DIR = os.environ.get("EE_DATA_DIR", "/data")
 CONFIG_PATH = os.path.join(DATA_DIR, "config.json")
+# Sentinel file the UI touches when the user clicks "Restart worker" in the
+# dashboard. The scan loop checks for this file once per cycle and, when
+# present, deletes it and exits non-zero so Docker's restart policy
+# (`restart: on-failure`) brings a fresh container up. See ui/app.py's
+# /restart endpoint.
+RESTART_SIGNAL_PATH = os.path.join(DATA_DIR, ".restart_requested")
 DB_PATH = os.path.join(DATA_DIR, "packets.db")
 STATE_PATH = os.path.join(DATA_DIR, "state.json")
 
@@ -132,6 +139,26 @@ def _rebuild_for_ee(raw: str) -> dict | None:
     }
 
 
+# --- restart signal --------------------------------------------------------
+
+def _consume_restart_signal() -> bool:
+    """Return True iff a restart was requested via the sentinel file.
+
+    The UI's POST /restart handler touches ``RESTART_SIGNAL_PATH``; the scan
+    loop polls this once per cycle. The file is deleted before we return
+    True so the request is honored exactly once and a fresh worker boot is
+    not stuck in a restart loop. Any filesystem error is swallowed: a
+    non-removable sentinel is more usefully ignored than fatal.
+    """
+    if not os.path.exists(RESTART_SIGNAL_PATH):
+        return False
+    try:
+        os.remove(RESTART_SIGNAL_PATH)
+    except OSError as exc:
+        log.warning("could not remove restart signal: %s", exc)
+    return True
+
+
 # --- state file ------------------------------------------------------------
 
 def _write_state(conn, *, status: str, error: str | None = None) -> None:
@@ -165,6 +192,15 @@ def scan_loop() -> None:
     """
     conn = db.connect(DB_PATH)
     while not _stop.is_set():
+        # Honor the UI's "Restart worker" button, if pressed. The sentinel
+        # file is consumed (deleted) before we exit, so a fresh boot is not
+        # stuck in a restart loop. exit(1) triggers Docker's on-failure
+        # restart policy, which is what brings the container back up.
+        if _consume_restart_signal():
+            log.info("UI restart signal received; exiting non-zero for docker restart")
+            _stop.set()
+            sys.exit(1)
+
         try:
             cfg = config.load(CONFIG_PATH)
         except config.ConfigError as exc:

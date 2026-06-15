@@ -36,6 +36,7 @@ import json
 import os
 import sqlite3
 import tempfile
+import time
 from datetime import datetime
 from pathlib import Path
 
@@ -43,6 +44,14 @@ from flask import Flask, redirect, render_template, request, url_for
 
 DEFAULT_DATA_DIR = "/data"
 DEFAULT_PORT = 8080
+
+# After a credentials save, the UI presents an optimistic "Verifying
+# credentials" state for this many seconds even if the worker's state.json
+# still says "needs_setup". The worker re-reads config.json on its next scan
+# cycle (~15s) and refreshes state.json on the cycle after that, so 60s
+# comfortably covers the round-trip. After this window, the dashboard
+# shows the worker's real status (catching truly-bad credentials).
+VERIFYING_WINDOW_SECONDS = 60
 
 # status code in state.json -> (display label, tone class used by the CSS)
 _STATUS_LABELS = {
@@ -171,13 +180,22 @@ def read_devices(data_dir):
 def write_config(data_dir, org_id, api_token):
     """Write ``config.json`` atomically.
 
-    Only the credentials are written. Scan-timing values are intentionally
-    omitted — the worker supplies its own defaults for any key the file does
-    not provide. The write is atomic (temp file + ``os.replace``) so the
-    worker, which re-reads this file every cycle, never sees a partial config.
+    Only the credentials and a ``saved_at`` timestamp are written. Scan-timing
+    values are intentionally omitted — the worker supplies its own defaults
+    for any key the file does not provide, and ignores keys it does not
+    recognise (``saved_at`` included). The write is atomic (temp file +
+    ``os.replace``) so the worker, which re-reads this file every cycle,
+    never sees a partial config.
+
+    The dashboard reads ``saved_at`` to show an optimistic "Verifying
+    credentials" state for a short window after submission, masking the
+    natural lag between this write and the worker's next scan cycle.
     """
     path = _config_path(data_dir)
-    payload = json.dumps({"org_id": org_id, "api_token": api_token}, indent=2)
+    payload = json.dumps(
+        {"org_id": org_id, "api_token": api_token, "saved_at": int(time.time())},
+        indent=2,
+    )
     directory = os.path.dirname(path) or "."
     handle = tempfile.NamedTemporaryFile(
         "w", encoding="utf-8", dir=directory,
@@ -232,6 +250,39 @@ def _status_view(state):
     }
 
 
+def _apply_verifying_override(status, raw_config, now=None):
+    """If credentials were just saved and the worker hasn't picked them up yet,
+    swap the status badge to an optimistic "Verifying credentials" state.
+
+    Closes the UX gap where, for the ~15-30s between config.json being
+    written and the worker reading it on its next scan cycle, the
+    dashboard would otherwise read "Waiting for credentials" — implying
+    the operator typed something wrong.
+
+    Returns the (possibly overridden) status dict. The override only
+    applies when the worker's current status is "needs_setup" or
+    "unknown": once the worker is actually running, its real state
+    wins immediately.
+    """
+    if not isinstance(raw_config, dict):
+        return status
+    saved_at = raw_config.get("saved_at")
+    if not isinstance(saved_at, (int, float)):
+        return status
+    elapsed = (now if now is not None else time.time()) - saved_at
+    if elapsed < 0 or elapsed >= VERIFYING_WINDOW_SECONDS:
+        return status
+    if status["code"] not in ("needs_setup", "unknown"):
+        return status
+    return {
+        "code": "verifying",
+        "label": "Verifying credentials",
+        "tone": "neutral",
+        "error": None,
+        "needs_creds": False,
+    }
+
+
 def _counts_view(state):
     """Pull the four headline counters out of the worker's state file."""
     packets = (state or {}).get("packets") or {}
@@ -282,9 +333,11 @@ def create_app(data_dir=None):
                 "setup.html", org_id="", error=None, configured=False
             )
         state = read_state(data_dir)
+        raw_config = _read_json(_config_path(data_dir))
+        status = _apply_verifying_override(_status_view(state), raw_config)
         return render_template(
             "dashboard.html",
-            status=_status_view(state),
+            status=status,
             counts=_counts_view(state),
             devices=read_devices(data_dir),
             updated=_format_epoch(state.get("updated_at") if state else None),
@@ -305,6 +358,28 @@ def create_app(data_dir=None):
             error=None,
             configured=config is not None,
         )
+
+    @app.route("/restart", methods=["POST"])
+    def restart_worker():
+        """Ask the worker to restart by touching a sentinel file.
+
+        The UI cannot signal the worker container directly (separate
+        process / cgroup / network namespace), but they share the data
+        directory. Worker 0.6.3+ polls for this file once per scan cycle;
+        when present, it deletes the file and exits non-zero. Docker's
+        `restart: on-failure` policy on the worker service brings a
+        fresh container back up within seconds.
+
+        Failures to touch the file (read-only filesystem, etc.) are
+        logged silently. The caller is redirected back to / either way,
+        so the user sees the dashboard refresh.
+        """
+        sentinel = os.path.join(data_dir, ".restart_requested")
+        try:
+            Path(sentinel).touch()
+        except OSError as exc:
+            app.logger.warning("could not touch restart sentinel: %s", exc)
+        return redirect(url_for("index"))
 
     @app.route("/config", methods=["POST"])
     def save_config():

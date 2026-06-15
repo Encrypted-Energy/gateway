@@ -335,7 +335,8 @@ body {
   color: var(--ee-polar-60);
   font-size: 13px;
 }
-.status-card-actions { display: flex; align-items: center; gap: 10px; }
+.status-card-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.inline-form { display: inline-flex; margin: 0; padding: 0; }
 
 /* KPI tiles. Four equal columns; collapse on narrow widths. */
 .kpis {

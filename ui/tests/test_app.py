@@ -98,7 +98,11 @@ def test_index_unconfigured_shows_setup(client):
     """With no config.json the root route is the setup wizard."""
     response = client.get("/")
     assert response.status_code == 200
-    assert b"Connect to Hubble" in response.data
+    # Use form-field labels as the durable marker; the page heading copy
+    # has been rebranded once already (Hubble -> Encrypted Energy) and a
+    # test pinned to that wording silently rotted until 0.6.3.
+    assert b"Organization ID" in response.data
+    assert b"API token" in response.data
 
 
 def test_post_valid_config_redirects_and_persists(client, tmp_path):
@@ -111,7 +115,11 @@ def test_post_valid_config_redirects_and_persists(client, tmp_path):
     assert response.headers["Location"].endswith("/")
 
     saved = json.loads((tmp_path / "config.json").read_text(encoding="utf-8"))
-    assert saved == {"org_id": "org-abc", "api_token": "tok-xyz"}
+    # Credentials are persisted alongside a `saved_at` timestamp the
+    # dashboard uses to show an optimistic verifying state for a minute.
+    assert saved["org_id"] == "org-abc"
+    assert saved["api_token"] == "tok-xyz"
+    assert isinstance(saved["saved_at"], int)
 
 
 def test_post_blank_token_rejected_and_nothing_written(client, tmp_path):
@@ -212,3 +220,100 @@ def test_dashboard_shows_counts_from_state_file(client, tmp_path):
     assert "Running" in body
     assert "42" in body
     assert "7" in body
+
+
+# --------------------------------------------------------------------------
+# Verifying-credentials optimistic state (0.6.3+)
+# --------------------------------------------------------------------------
+
+def test_dashboard_shows_verifying_when_creds_just_saved(client, tmp_path):
+    """Within the verifying window, dashboard masks the worker stale state."""
+    import time as _time
+    (tmp_path / "config.json").write_text(
+        json.dumps({
+            "org_id": "org-abc",
+            "api_token": "tok-xyz",
+            "saved_at": int(_time.time()) - 5,  # 5s ago, well inside window
+        }),
+        encoding="utf-8",
+    )
+    # Worker is still reporting needs_setup (its old config-poll cycle)
+    _write_state(tmp_path, {"status": "needs_setup", "error": "missing"})
+
+    response = client.get("/")
+    body = response.data.decode("utf-8")
+    assert "Verifying credentials" in body
+    # Optimistic state never surfaces the underlying error message.
+    assert "missing" not in body
+    # Page auto-refreshes during verification.
+    assert "http-equiv=\"refresh\"" in body
+
+
+def test_dashboard_skips_verifying_after_window_expires(client, tmp_path):
+    """Once the 60-second window has passed, dashboard shows worker truth."""
+    import time as _time
+    (tmp_path / "config.json").write_text(
+        json.dumps({
+            "org_id": "org-abc",
+            "api_token": "tok-xyz",
+            "saved_at": int(_time.time()) - 120,  # 2 minutes ago
+        }),
+        encoding="utf-8",
+    )
+    _write_state(tmp_path, {"status": "needs_setup", "error": "missing creds"})
+
+    response = client.get("/")
+    body = response.data.decode("utf-8")
+    assert "Verifying credentials" not in body
+    # Real status visible — the operator can debug it.
+    assert "Waiting for credentials" in body
+
+
+def test_dashboard_skips_verifying_when_worker_already_running(client, tmp_path):
+    """If worker is healthy, never show the optimistic state."""
+    import time as _time
+    (tmp_path / "config.json").write_text(
+        json.dumps({
+            "org_id": "org-abc",
+            "api_token": "tok-xyz",
+            "saved_at": int(_time.time()),  # just now
+        }),
+        encoding="utf-8",
+    )
+    _write_state(tmp_path, {
+        "status": "running",
+        "packets": {"total": 1, "ingested": 1, "pending": 0, "devices": 1},
+    })
+
+    response = client.get("/")
+    body = response.data.decode("utf-8")
+    assert "Verifying credentials" not in body
+    assert "Running" in body
+
+
+# --------------------------------------------------------------------------
+# Restart-worker button (0.6.3+)
+# --------------------------------------------------------------------------
+
+def test_restart_touches_sentinel_and_redirects(client, tmp_path):
+    """POST /restart writes the sentinel file the worker polls for."""
+    response = client.post("/restart")
+    assert response.status_code == 302
+    assert response.headers["Location"].endswith("/")
+    assert (tmp_path / ".restart_requested").exists()
+
+
+def test_restart_button_only_appears_on_dashboard(client, tmp_path):
+    """The button is on the dashboard, not the setup wizard."""
+    # Configured: dashboard
+    (tmp_path / "config.json").write_text(
+        json.dumps({"org_id": "org-abc", "api_token": "tok-xyz"}),
+        encoding="utf-8",
+    )
+    response = client.get("/")
+    assert b"Restart worker" in response.data
+
+    # Reconfigure path
+    response = client.get("/setup")
+    assert b"Restart worker" not in response.data
+

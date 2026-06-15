@@ -1,6 +1,13 @@
 {# EE Gateway UI dashboard. GPL-3.0-only; see LICENSE at the repository root. #}
 {% extends "base.html" %}
 {% block title %}Dashboard, EE Gateway{% endblock %}
+{% block head_extra %}
+  {# Auto-refresh during the brief verification window so the user sees the
+     real status flip into place without manual refresh. #}
+  {% if status.code == 'verifying' %}
+  <meta http-equiv="refresh" content="5">
+  {% endif %}
+{% endblock %}
 {% block topbar_actions %}<span class="route-chip">/</span>{% endblock %}
 {% block footer_status %}
   <span class="pill pill-{{ status.tone }}">{{ status.label }}</span>
@@ -25,6 +32,14 @@
       {% if status.needs_creds %}
       <a class="btn btn-ghost" href="{{ url_for('setup') }}">Re-enter credentials</a>
       {% endif %}
+      {# Worker-restart shortcut. Sends POST /restart, which touches a
+         sentinel file the worker polls; worker exits non-zero and Docker
+         restarts it. Useful after plugging a USB dongle in or whenever
+         credentials weren't picked up cleanly. #}
+      <form class="inline-form" method="post" action="{{ url_for('restart_worker') }}"
+            onsubmit="return confirm('Restart the gateway worker? Container comes back up automatically within ~10 seconds.');">
+        <button class="btn btn-ghost" type="submit">Restart worker</button>
+      </form>
     </div>
   </div>
 
