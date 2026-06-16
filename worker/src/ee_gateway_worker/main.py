@@ -73,6 +73,15 @@ VACUUM_INTERVAL_SECONDS = 86_400  # 24h
 # Set by the SIGTERM/SIGINT handler; both loops watch it and exit cleanly.
 _stop = threading.Event()
 
+# Process start time (monotonic), captured at import so reading uptime is
+# constant-time and safe in any thread.
+_PROCESS_START_MONOTONIC = time.monotonic()
+
+
+def _uptime_seconds() -> int:
+    return int(time.monotonic() - _PROCESS_START_MONOTONIC)
+
+
 # Shared in-process singletons. Wired up in ``main()`` and passed to each
 # loop; module-level so test code can patch them out if needed.
 _gps: gps.GpsClient | None = None
@@ -212,9 +221,14 @@ def scan_loop() -> None:
             packets = ble.scan(timeout=cfg.scan_timeout)
         except HubbleError as exc:
             log.error("scan failed: %s", exc)
+            if _counters is not None:
+                _counters.add_ble_scan_error()
             _write_state(conn, status="scan_error", error=str(exc))
             _stop.wait(cfg.scan_interval)
             continue
+
+        if packets and _counters is not None:
+            _counters.add_heard(len(packets))
 
         # Capture a single GPS fix per scan cycle. Within one scan window
         # (typically 10s) the gateway has not moved meaningfully, so reusing
@@ -360,6 +374,7 @@ def heartbeat_loop() -> None:
                 gps=_gps,
                 counters_store=_counters,
                 db_conn=conn,
+                uptime_seconds=_uptime_seconds(),
             )
 
             # Housekeeping. The DELETE is cheap (index on ingested) so we

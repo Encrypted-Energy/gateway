@@ -40,6 +40,8 @@ class CountersSnapshot:
 
     forwarded: int = 0
     dropped_no_fix: int = 0
+    heard: int = 0
+    ble_scan_errors: int = 0
 
 
 class CountersStore:
@@ -49,6 +51,8 @@ class CountersStore:
         self._lock = threading.Lock()
         self._forwarded = 0
         self._dropped_no_fix = 0
+        self._heard = 0
+        self._ble_scan_errors = 0
 
     def add_forwarded(self, n: int = 1) -> None:
         if n <= 0:
@@ -62,6 +66,24 @@ class CountersStore:
         with self._lock:
             self._dropped_no_fix += n
 
+    def add_heard(self, n: int = 1) -> None:
+        """Bumped once per packet the scanner observes, before any GPS or
+        ingest gating. The dropped/forwarded counters slice this further;
+        heard is the raw fleet-radio-activity signal."""
+        if n <= 0:
+            return
+        with self._lock:
+            self._heard += n
+
+    def add_ble_scan_error(self, n: int = 1) -> None:
+        """Bumped each time a BLE scan attempt raises. v1 does not slice
+        by exception class — once the BleakDBusError catch (roadmap #5)
+        lands the counter can grow a ``kind`` dimension."""
+        if n <= 0:
+            return
+        with self._lock:
+            self._ble_scan_errors += n
+
     def snapshot_and_reset(self) -> CountersSnapshot:
         """Take a snapshot of the current deltas and reset them to zero.
 
@@ -69,9 +91,16 @@ class CountersStore:
         :meth:`restore` if the server does not accept it.
         """
         with self._lock:
-            snap = CountersSnapshot(self._forwarded, self._dropped_no_fix)
+            snap = CountersSnapshot(
+                forwarded=self._forwarded,
+                dropped_no_fix=self._dropped_no_fix,
+                heard=self._heard,
+                ble_scan_errors=self._ble_scan_errors,
+            )
             self._forwarded = 0
             self._dropped_no_fix = 0
+            self._heard = 0
+            self._ble_scan_errors = 0
             return snap
 
     def restore(self, snap: CountersSnapshot) -> None:
@@ -83,3 +112,5 @@ class CountersStore:
         with self._lock:
             self._forwarded += snap.forwarded
             self._dropped_no_fix += snap.dropped_no_fix
+            self._heard += snap.heard
+            self._ble_scan_errors += snap.ble_scan_errors
