@@ -37,6 +37,7 @@ import sqlite3
 import urllib.error
 import urllib.request
 
+from ee_gateway_worker import __version__ as WORKER_VERSION
 from ee_gateway_worker import counters as counters_mod
 from ee_gateway_worker import db as db_mod
 from ee_gateway_worker import gps as gps_mod
@@ -98,6 +99,7 @@ def report(
     gps: gps_mod.GpsClient | None = None,
     counters_store: counters_mod.CountersStore | None = None,
     db_conn: sqlite3.Connection | None = None,
+    uptime_seconds: int | None = None,
 ) -> dict | None:
     """Send one heartbeat. Returns the parsed JSON response, or ``None`` on failure.
 
@@ -149,6 +151,14 @@ def report(
     if snapshot is not None:
         body["packets_forwarded_delta"] = snapshot.forwarded
         body["packets_dropped_no_fix_delta"] = snapshot.dropped_no_fix
+        body["packets_heard_delta"] = snapshot.heard
+        body["ble_scan_errors_delta"] = snapshot.ble_scan_errors
+
+    # Worker self-description. Older EE servers ignore unknown fields, so
+    # these are safe to send unconditionally.
+    body["worker_version"] = WORKER_VERSION
+    if uptime_seconds is not None:
+        body["uptime_seconds"] = int(uptime_seconds)
 
     request = urllib.request.Request(
         url,
