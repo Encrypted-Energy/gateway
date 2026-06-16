@@ -6,6 +6,14 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- Worker 0.7.0: fleet telemetry. Two new counter deltas in the heartbeat
+  (`packets_heard_delta`, `ble_scan_errors_delta`) ride the existing
+  snapshot/restore pattern, so a failed heartbeat never loses counts. Two
+  new self-description fields (`worker_version`, `uptime_seconds`) let
+  encryptedenergy.com chart rollout adoption and detect flapping
+  gateways. Backward-compatible: pre-0.7.0 ee-web silently ignores the
+  new fields. App manifest moves to 0.7.0; worker image bumps to 0.7.0;
+  UI stays at 0.4.0.
 - Project scaffold: GPLv3 license, repository layout.
 - Worker packet store (`worker/db.py`): SQLite `packet_log` table in WAL mode
   with insert, pending-queue, ingest-status, and aggregate-read helpers.
