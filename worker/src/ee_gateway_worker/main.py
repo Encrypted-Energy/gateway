@@ -82,6 +82,19 @@ def _uptime_seconds() -> int:
     return int(time.monotonic() - _PROCESS_START_MONOTONIC)
 
 
+def _parse_optional_float(raw: str | None) -> float | None:
+    """Return raw as a float, or None on empty / unparseable input. Used
+    for env-var-driven optional config; a typo in the compose should not
+    crash the worker."""
+    if not raw:
+        return None
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        log.warning("ignoring unparseable float env var value: %r", raw)
+        return None
+
+
 # Shared in-process singletons. Wired up in ``main()`` and passed to each
 # loop; module-level so test code can patch them out if needed.
 _gps: gps.GpsClient | None = None
@@ -422,8 +435,17 @@ def main() -> None:
 
     # GPS reader runs in its own thread and is shared across the scan loop
     # (reads current fix) and the heartbeat loop (reports status string).
+    #
+    # EE_GPS_FIXED_LAT / EE_GPS_FIXED_LON (0.7.1+): stationary-location
+    # override. Both must be set to valid floats. When active the worker
+    # ignores gpsd and stamps every packet with the configured coordinate.
+    # Use cases: kiosk / indoor mount where no GPS signal is available,
+    # or development testing while a replacement dongle ships.
     _counters = counters.CountersStore()
-    _gps = gps.GpsClient()
+    _gps = gps.GpsClient(
+        fixed_lat=_parse_optional_float(os.environ.get("EE_GPS_FIXED_LAT")),
+        fixed_lon=_parse_optional_float(os.environ.get("EE_GPS_FIXED_LON")),
+    )
     _gps.start()
 
     ingest = threading.Thread(target=ingest_loop, name="ingest", daemon=True)

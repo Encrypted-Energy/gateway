@@ -15,18 +15,15 @@ name: EE Gateway
 tagline: Self-hosted Hubble Network Bluetooth gateway
 icon: https://raw.githubusercontent.com/Encrypted-Energy/umbrel-community-app-store/main/encryptedenergy-ee-gateway/icon.svg
 category: Networking
-version: "0.7.0"
+version: "0.7.1"
 releaseNotes: >-
-  Fleet telemetry, the operator-invisible plumbing that lets EE
-  detect and explain fleet-wide problems (a bad firmware rollout, a
-  region with weak GPS, BLE scan errors) without anyone having to
-  email in. The worker reports four new heartbeat fields — total
-  packets observed by the radio, BLE scan error count, worker version,
-  and uptime — using the same delta + retry pattern that already
-  guards the packet counters; data is never lost on a failed POST.
-  No new permissions, no new outbound destinations: everything still
-  rides the existing heartbeat to encryptedenergy.com. New worker
-  image 0.7.0; UI image stays at 0.4.0; manifest moves to 0.7.0.
+  Stationary-location override. Two new env vars (EE_GPS_FIXED_LAT
+  and EE_GPS_FIXED_LON) let an operator pin their gateway to a known
+  coordinate, bypassing gpsd entirely. Intended for indoor-mounted /
+  kiosk gateways where a GPS dongle can't get a fix, and for keeping
+  the ingest pipeline running while a replacement dongle ships. Off
+  by default; set both env vars in the compose to activate. New
+  worker image 0.7.1; UI image stays at 0.4.0; manifest moves to 0.7.1.
 port: 8080
 description: >-
   EE Gateway turns your Umbrel into a self-hosted Hubble Network Bluetooth
