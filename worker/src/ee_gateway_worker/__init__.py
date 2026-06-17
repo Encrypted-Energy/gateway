@@ -3,4 +3,4 @@
 # Licensed under the GNU General Public License version 3 (GPL-3.0-only).
 # See the LICENSE file at the repository root.
 
-__version__ = "0.7.3"
+__version__ = "0.7.4"

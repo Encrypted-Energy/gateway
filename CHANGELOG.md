@@ -6,6 +6,18 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- Gateway 0.9.0 (worker 0.7.4 + UI 0.5.0): persistent fixed-location
+  override via the dashboard. New UI route `/advanced` with a form
+  accepting decimal-degree latitude / longitude, range-validated
+  server-side (-90..90 / -180..180), persisted to `config.json` in
+  the persistent `/data` volume. Config.json survives Umbrel app
+  updates (compose-only file gets overwritten on update; the data
+  volume does not), so operators no longer need to re-add env-var
+  overrides every release. Worker config loader gains `fixed_lat`
+  / `fixed_lon` fields with the same validation; precedence is env
+  var (legacy 0.7.1 path) -> config.json (new persistent path) ->
+  no override. A successful save touches the restart sentinel so
+  the new mode takes effect on the next worker boot.
 - Gateway 0.8.1 (worker 0.7.3 + UI 0.4.1): worker now forwards each
   packet's device EID (hex string) to EE in the ingest body. EE uses
   it server-side to enforce a 1-bounty-per-(device, org, day) cap as

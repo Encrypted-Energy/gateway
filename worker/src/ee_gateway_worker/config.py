@@ -71,6 +71,12 @@ class Config:
     scan_timeout: int = DEFAULT_SCAN_TIMEOUT
     ee_base_url: str = DEFAULT_EE_BASE_URL
     heartbeat_interval: int = DEFAULT_HEARTBEAT_INTERVAL
+    # Fixed-location override (0.7.4+, set via UI -> /data/config.json).
+    # Both must be present and in range for the override to activate.
+    # Lives in config.json (persistent across Umbrel app updates) rather
+    # than env vars (wiped on each compose refresh).
+    fixed_lat: float | None = None
+    fixed_lon: float | None = None
 
 
 def _read_json_file(path: Path) -> dict:
@@ -163,6 +169,27 @@ def load(config_path: str | Path) -> Config:
             f"got {heartbeat_interval}"
         )
 
+    # Fixed-location override. Env wins (legacy 0.7.1+ behavior); file is
+    # the persistent path (0.7.4+, set via UI /advanced). Either must
+    # supply BOTH lat AND lon for the override to activate. Out-of-range
+    # values are treated as unset (a typo in the UI can't crash the worker)
+    # — the UI does its own range validation before saving, so this is a
+    # defense-in-depth check.
+    fixed_lat = _parse_coord(
+        pick("EE_GPS_FIXED_LAT", "fixed_lat"),
+        bounds=(-90.0, 90.0),
+        field="fixed_lat",
+    )
+    fixed_lon = _parse_coord(
+        pick("EE_GPS_FIXED_LON", "fixed_lon"),
+        bounds=(-180.0, 180.0),
+        field="fixed_lon",
+    )
+    # Both required; one alone is invalid and silently disabled.
+    if fixed_lat is None or fixed_lon is None:
+        fixed_lat = None
+        fixed_lon = None
+
     return Config(
         org_id=str(org_id),
         api_token=str(api_token),
@@ -170,4 +197,26 @@ def load(config_path: str | Path) -> Config:
         scan_timeout=scan_timeout,
         ee_base_url=ee_base_url,
         heartbeat_interval=heartbeat_interval,
+        fixed_lat=fixed_lat,
+        fixed_lon=fixed_lon,
     )
+
+
+def _parse_coord(value, *, bounds: tuple[float, float], field: str) -> float | None:
+    """Return ``value`` as a float in ``bounds``, or ``None`` if it can't.
+
+    Used for the fixed-location override. Unparseable or out-of-range
+    inputs return ``None`` so a typo never blocks worker startup. The
+    UI does its own range validation before write; this is belt-and-
+    suspenders.
+    """
+    if value is None or value == "":
+        return None
+    try:
+        f = float(value)
+    except (TypeError, ValueError):
+        return None
+    lo, hi = bounds
+    if not lo <= f <= hi:
+        return None
+    return f
