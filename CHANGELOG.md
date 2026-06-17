@@ -6,6 +6,16 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- Worker 0.7.1: stationary-location override. Two env vars
+  (`EE_GPS_FIXED_LAT`, `EE_GPS_FIXED_LON`) let an operator pin the gateway
+  to a known coordinate, bypassing gpsd entirely. The worker stamps every
+  packet with the configured coordinate and reports `gps_status="fix"` in
+  heartbeats. Off by default; both env vars must be set to floats to
+  activate (a misconfig is logged and ignored, never crashes the worker).
+  Use cases: indoor-mounted / kiosk gateways where GPS can't see sky,
+  development testing, or keeping the ingest pipeline running while a
+  replacement dongle ships. App manifest moves to 0.7.1; worker image
+  bumps to 0.7.1; UI stays at 0.4.0.
 - Worker 0.7.0: fleet telemetry. Two new counter deltas in the heartbeat
   (`packets_heard_delta`, `ble_scan_errors_delta`) ride the existing
   snapshot/restore pattern, so a failed heartbeat never loses counts. Two

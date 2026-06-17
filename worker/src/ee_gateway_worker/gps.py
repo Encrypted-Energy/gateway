@@ -76,9 +76,24 @@ class GpsClient:
     The ``_run`` thread owns the socket. The scan loop only calls
     :meth:`current_fix` and :meth:`status`, both of which take the lock
     briefly and return immediately.
+
+    Fixed-location override (0.7.1+): when ``fixed_lat`` and ``fixed_lon``
+    are both supplied (typically from ``EE_GPS_FIXED_LAT`` /
+    ``EE_GPS_FIXED_LON`` env vars in the compose), the client reports a
+    constant fix at that coordinate and stops paying attention to gpsd.
+    Useful for stationary gateways (kiosks, indoor mounts) and for
+    operators waiting on a replacement dongle to keep the ingest pipeline
+    exercised. The gpsd background thread still starts so the gateway
+    container looks identical, but its reads are ignored.
     """
 
-    def __init__(self, host: str = GPSD_HOST, port: int = GPSD_PORT) -> None:
+    def __init__(
+        self,
+        host: str = GPSD_HOST,
+        port: int = GPSD_PORT,
+        fixed_lat: Optional[float] = None,
+        fixed_lon: Optional[float] = None,
+    ) -> None:
         self._host = host
         self._port = port
         self._lock = threading.Lock()
@@ -86,6 +101,16 @@ class GpsClient:
         self._dongle_seen = False
         self._stop = threading.Event()
         self._thread = threading.Thread(target=self._run, name="gpsd", daemon=True)
+        # Fixed-location override. Both coords must be supplied; one alone
+        # is invalid and is silently ignored (we log a warning when wiring
+        # this up in main.py so the operator sees the misconfig).
+        self._fixed: Optional[GpsFix] = None
+        if fixed_lat is not None and fixed_lon is not None:
+            self._fixed = GpsFix(lat=float(fixed_lat), lon=float(fixed_lon), at=time.time())
+            log.warning(
+                "GpsClient in FIXED-LOCATION mode at (%s, %s); gpsd reports will be ignored",
+                fixed_lat, fixed_lon,
+            )
 
     def start(self) -> None:
         self._thread.start()
@@ -94,7 +119,15 @@ class GpsClient:
         self._stop.set()
 
     def current_fix(self) -> Optional[GpsFix]:
-        """Return the most recent non-stale fix, or ``None`` if no fresh fix."""
+        """Return the most recent non-stale fix, or ``None`` if no fresh fix.
+
+        In fixed-location mode, returns a synthetic fix stamped at the
+        current time on every call — never stale, never None.
+        """
+        if self._fixed is not None:
+            # Refresh the timestamp so packets carry "now" and the fix
+            # never trips the TTL check elsewhere in the codebase.
+            return GpsFix(lat=self._fixed.lat, lon=self._fixed.lon, at=time.time())
         with self._lock:
             if self._fix is None:
                 return None
@@ -104,6 +137,8 @@ class GpsClient:
 
     def status(self) -> str:
         """One of ``"fix"``, ``"no_fix"``, ``"dongle_missing"``."""
+        if self._fixed is not None:
+            return "fix"
         with self._lock:
             if not self._dongle_seen:
                 return "dongle_missing"
