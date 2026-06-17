@@ -146,6 +146,9 @@ def _rebuild_for_ee(raw: str) -> dict | None:
     over from a 0.4.0 worker, or stored before the first GPS fix). The
     caller should mark such rows skipped, not retry them — Hubble rejects
     packets without coordinates so re-sending will never succeed.
+
+    From 0.7.3 also forwards ``eid`` (the device identifier) so EE can
+    enforce its per-device-per-org-per-day bounty cap server-side.
     """
     fields = json.loads(raw)
     lat = fields.get("latitude")
@@ -158,6 +161,10 @@ def _rebuild_for_ee(raw: str) -> dict | None:
         "timestamp": fields.get("timestamp") or int(time.time()),
         "latitude": float(lat),
         "longitude": float(lon),
+        # May be None for packet types that don't carry an EID. EE
+        # treats absent / None eid as "skip the cap" which preserves
+        # backward compat with pre-0.7.3 workers.
+        "eid": fields.get("eid"),
     }
 
 
@@ -329,6 +336,7 @@ def ingest_loop() -> None:
                     timestamp=packet["timestamp"],
                     latitude=packet["latitude"],
                     longitude=packet["longitude"],
+                    eid=packet.get("eid"),
                 )
                 db.mark_ingested(conn, row["id"])
                 if _counters is not None:
