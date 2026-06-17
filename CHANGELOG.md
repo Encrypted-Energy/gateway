@@ -6,6 +6,14 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- Gateway 0.8.0 (worker 0.7.2 + UI 0.4.1): two QoL improvements bundled.
+  Worker entrypoint now auto-discovers the GPS dongle across both common
+  USB-serial families — `/dev/ttyUSB*` (PL2303-class) and `/dev/ttyACM*`
+  (CDC-ACM / u-blox). Operators with either dongle family Just Work
+  with no compose override; `EE_GPS_DEVICE` still wins when set and the
+  path exists. UI dashboard header reads the version from the
+  `EE_GATEWAY_VERSION` env var (passed by the compose) instead of a
+  hardcoded string, so the badge stays accurate across releases.
 - Worker 0.7.1: stationary-location override. Two env vars
   (`EE_GPS_FIXED_LAT`, `EE_GPS_FIXED_LON`) let an operator pin the gateway
   to a known coordinate, bypassing gpsd entirely. The worker stamps every

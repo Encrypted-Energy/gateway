@@ -22,7 +22,7 @@
             <path d="M480.83 346.4 L542.07 399.23 L542.07 351.2 L480.83 298.38 Z"/>
           </g>
         </svg>
-        <span class="brand-name">EE<span class="sep">/</span>GATEWAY<span class="sep">·</span><span style="font-weight:400;letter-spacing:.06em;font-size:11px;opacity:.55;">v0.6</span></span>
+        <span class="brand-name">EE<span class="sep">/</span>GATEWAY{% if gateway_version %}<span class="sep">·</span><span style="font-weight:400;letter-spacing:.06em;font-size:11px;opacity:.55;">v{{ gateway_version }}</span>{% endif %}</span>
       </div>
       <div class="topbar-actions">
         {% block topbar_actions %}<span class="route-chip">/</span>{% endblock %}

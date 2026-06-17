@@ -34,7 +34,7 @@ services:
   # extra download, and it is the only place root is used. This is NOT privileged
   # mode; the app containers themselves stay non-root.
   init_perms:
-    image: encryptedenergy/ee-gateway-worker:0.7.1
+    image: encryptedenergy/ee-gateway-worker:0.7.2
     user: "0:0"
     entrypoint: ["sh", "-c", "chown -R 1000:1000 /data"]
     restart: "no"
@@ -45,7 +45,7 @@ services:
   # no added capabilities, no Bluetooth access. Runs as uid 1000 (set in the
   # image). init: true so SIGTERM reaches Flask for a clean shutdown.
   ui:
-    image: encryptedenergy/ee-gateway-ui:0.4.0
+    image: encryptedenergy/ee-gateway-ui:0.4.1
     init: true
     depends_on:
       init_perms:
@@ -57,6 +57,9 @@ services:
     environment:
       EE_DATA_DIR: /data
       EE_UI_PORT: 8080
+      # Brand-line version shown in the dashboard header. Bump this when
+      # the app manifest version bumps so the operator sees what's running.
+      EE_GATEWAY_VERSION: "0.8.0"
 
   # BLE scan + GPS-stamped cloud ingest worker. It reaches the host's
   # Bluetooth radio through bluetoothd over the D-Bus system bus, talks to
@@ -65,7 +68,7 @@ services:
   # process runs as uid 1000; gpsd starts as root only to open the
   # serial device, then drops to user nobody.
   worker:
-    image: encryptedenergy/ee-gateway-worker:0.7.1
+    image: encryptedenergy/ee-gateway-worker:0.7.2
     init: true
     # Wait for the one-time ownership fix, then self-heal on any non-zero exit
     # (a transient radio or D-Bus error, or a start that raced init_perms). In
@@ -123,5 +126,8 @@ services:
       - /dev:/dev
     environment:
       EE_DATA_DIR: /data
-      # Override here if your dongle enumerates as /dev/ttyACM0 (u-blox).
-      EE_GPS_DEVICE: /dev/ttyUSB0
+      # From 0.7.2, the entrypoint auto-discovers the GPS dongle across
+      # /dev/ttyUSB* (PL2303-class) and /dev/ttyACM* (u-blox / CDC-ACM)
+      # and starts gpsd on whatever's present. Set EE_GPS_DEVICE here to
+      # force a specific path (e.g. EE_GPS_DEVICE: /dev/serial/by-id/...)
+      # or to keep the 0.7.x behavior for a non-standard install.
