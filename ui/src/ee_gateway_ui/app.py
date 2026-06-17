@@ -178,24 +178,63 @@ def read_devices(data_dir):
 # --------------------------------------------------------------------------
 
 def write_config(data_dir, org_id, api_token):
-    """Write ``config.json`` atomically.
+    """Update credentials in ``config.json`` atomically, preserving other keys.
 
-    Only the credentials and a ``saved_at`` timestamp are written. Scan-timing
-    values are intentionally omitted — the worker supplies its own defaults
-    for any key the file does not provide, and ignores keys it does not
-    recognise (``saved_at`` included). The write is atomic (temp file +
-    ``os.replace``) so the worker, which re-reads this file every cycle,
-    never sees a partial config.
+    From 0.5.0 the UI writes additional fields to this file (fixed_lat /
+    fixed_lon for the location override). Saving credentials must NOT
+    clobber those, so we read-merge-write rather than overwrite. The
+    worker supplies its own defaults for any key the file omits.
 
     The dashboard reads ``saved_at`` to show an optimistic "Verifying
     credentials" state for a short window after submission, masking the
     natural lag between this write and the worker's next scan cycle.
     """
+    _merge_config(data_dir, {
+        "org_id": org_id,
+        "api_token": api_token,
+        "saved_at": int(time.time()),
+    })
+
+
+def write_advanced_config(data_dir, fixed_lat, fixed_lon):
+    """Update fixed-location override in ``config.json``, preserving credentials.
+
+    Both ``fixed_lat`` and ``fixed_lon`` must be present together for the
+    override to be persisted; either both ``None`` or both floats. Passing
+    ``None`` for both clears any existing override (back to gpsd).
+    """
+    existing = _read_json(_config_path(data_dir)) or {}
+    if not isinstance(existing, dict):
+        existing = {}
+    updates: dict = {"saved_at": int(time.time())}
+    if fixed_lat is None or fixed_lon is None:
+        # Clear: drop the keys entirely so the worker's "no override" path is
+        # unambiguous. Falsy-but-present zeros would be a valid coord at
+        # (0, 0) and shouldn't be confused with "cleared."
+        existing.pop("fixed_lat", None)
+        existing.pop("fixed_lon", None)
+    else:
+        updates["fixed_lat"] = float(fixed_lat)
+        updates["fixed_lon"] = float(fixed_lon)
+    _merge_config(data_dir, updates, existing=existing)
+
+
+def _merge_config(data_dir, updates, existing=None):
+    """Atomic read-modify-write of ``config.json``.
+
+    Reads the current file (or treats it as ``{}`` if missing or malformed),
+    overlays ``updates``, and writes the result via temp-file + ``os.replace``
+    so the worker, which re-reads this file every cycle, never sees a
+    partial config. Pass ``existing`` to avoid a second disk read when the
+    caller already loaded it.
+    """
     path = _config_path(data_dir)
-    payload = json.dumps(
-        {"org_id": org_id, "api_token": api_token, "saved_at": int(time.time())},
-        indent=2,
-    )
+    if existing is None:
+        existing = _read_json(path) or {}
+    if not isinstance(existing, dict):
+        existing = {}
+    existing.update(updates)
+    payload = json.dumps(existing, indent=2)
     directory = os.path.dirname(path) or "."
     handle = tempfile.NamedTemporaryFile(
         "w", encoding="utf-8", dir=directory,
@@ -211,6 +250,18 @@ def write_config(data_dir, org_id, api_token):
         except OSError:
             pass
         raise
+
+
+def read_advanced_config(data_dir):
+    """Return current fixed-location override values, or ``(None, None)``."""
+    raw = _read_json(_config_path(data_dir))
+    if not isinstance(raw, dict):
+        return None, None
+    lat = raw.get("fixed_lat")
+    lon = raw.get("fixed_lon")
+    if not isinstance(lat, (int, float)) or not isinstance(lon, (int, float)):
+        return None, None
+    return float(lat), float(lon)
 
 
 # --------------------------------------------------------------------------
@@ -410,7 +461,117 @@ def create_app(data_dir=None):
         write_config(data_dir, org_id, api_token)
         return redirect(url_for("index"))
 
+    @app.route("/advanced", methods=["GET"])
+    def advanced():
+        """Show the fixed-location override form."""
+        lat, lon = read_advanced_config(data_dir)
+        return render_template(
+            "advanced.html",
+            fixed_lat="" if lat is None else lat,
+            fixed_lon="" if lon is None else lon,
+            error=None,
+            saved=False,
+        )
+
+    @app.route("/advanced", methods=["POST"])
+    def save_advanced():
+        """Validate and persist the fixed-location override.
+
+        Both fields empty -> clears the override. Either both must be
+        non-empty floats in range, or both must be empty. One alone is
+        treated as a validation error (and re-renders the form) so an
+        operator who started filling the form out can't accidentally
+        save a half-configured override.
+
+        On a successful save, the worker is asked to restart so the new
+        GpsClient picks up the change on next boot (gps mode is set at
+        worker boot; restart is the cleanest way to apply it).
+        """
+        raw_lat = (request.form.get("fixed_lat") or "").strip()
+        raw_lon = (request.form.get("fixed_lon") or "").strip()
+
+        if not raw_lat and not raw_lon:
+            write_advanced_config(data_dir, None, None)
+            _touch_restart_sentinel(data_dir)
+            return render_template(
+                "advanced.html",
+                fixed_lat="",
+                fixed_lon="",
+                error=None,
+                saved=True,
+            )
+
+        if not raw_lat or not raw_lon:
+            return (
+                render_template(
+                    "advanced.html",
+                    fixed_lat=raw_lat,
+                    fixed_lon=raw_lon,
+                    error="Both latitude and longitude are required, or clear both to disable.",
+                    saved=False,
+                ),
+                400,
+            )
+
+        try:
+            lat = float(raw_lat)
+            lon = float(raw_lon)
+        except ValueError:
+            return (
+                render_template(
+                    "advanced.html",
+                    fixed_lat=raw_lat,
+                    fixed_lon=raw_lon,
+                    error="Latitude and longitude must be numeric (e.g. 40.712082, -74.040900).",
+                    saved=False,
+                ),
+                400,
+            )
+
+        if not -90.0 <= lat <= 90.0:
+            return (
+                render_template(
+                    "advanced.html",
+                    fixed_lat=raw_lat,
+                    fixed_lon=raw_lon,
+                    error="Latitude must be between -90 and 90.",
+                    saved=False,
+                ),
+                400,
+            )
+        if not -180.0 <= lon <= 180.0:
+            return (
+                render_template(
+                    "advanced.html",
+                    fixed_lat=raw_lat,
+                    fixed_lon=raw_lon,
+                    error="Longitude must be between -180 and 180.",
+                    saved=False,
+                ),
+                400,
+            )
+
+        write_advanced_config(data_dir, lat, lon)
+        _touch_restart_sentinel(data_dir)
+        return render_template(
+            "advanced.html",
+            fixed_lat=lat,
+            fixed_lon=lon,
+            error=None,
+            saved=True,
+        )
+
     return app
+
+
+def _touch_restart_sentinel(data_dir):
+    """Ask the worker to restart so a config change takes effect on its
+    next boot. Quiet failure: the operator can still hit "Restart worker"
+    manually if this somehow couldn't write."""
+    try:
+        Path(os.path.join(data_dir, ".restart_requested")).touch()
+    except OSError:
+        pass
 
 
 def main():

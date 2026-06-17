@@ -444,15 +444,26 @@ def main() -> None:
     # GPS reader runs in its own thread and is shared across the scan loop
     # (reads current fix) and the heartbeat loop (reports status string).
     #
-    # EE_GPS_FIXED_LAT / EE_GPS_FIXED_LON (0.7.1+): stationary-location
-    # override. Both must be set to valid floats. When active the worker
-    # ignores gpsd and stamps every packet with the configured coordinate.
-    # Use cases: kiosk / indoor mount where no GPS signal is available,
-    # or development testing while a replacement dongle ships.
+    # Fixed-location override (0.7.4+): both fixed_lat and fixed_lon may be
+    # supplied via either the UI (/advanced -> config.json) or env vars
+    # (EE_GPS_FIXED_LAT / LON, legacy 0.7.1 path). When both are set
+    # in-range, the worker ignores gpsd and stamps every packet with the
+    # configured coordinate. Use cases: kiosk / indoor mount where no GPS
+    # signal is available, or development testing while a replacement
+    # dongle ships. Reading from config.json (persistent /data volume)
+    # is the recommended path because it survives Umbrel app updates,
+    # which overwrite the compose file (and thus any env-var overrides).
     _counters = counters.CountersStore()
+    try:
+        _boot_config = config.load(CONFIG_PATH)
+    except config.ConfigError:
+        # Pre-setup: no credentials yet. Start GpsClient without fixed
+        # coords; the scan loop's per-iteration config reload will pick
+        # them up once the operator completes setup.
+        _boot_config = None
     _gps = gps.GpsClient(
-        fixed_lat=_parse_optional_float(os.environ.get("EE_GPS_FIXED_LAT")),
-        fixed_lon=_parse_optional_float(os.environ.get("EE_GPS_FIXED_LON")),
+        fixed_lat=(_boot_config.fixed_lat if _boot_config else None),
+        fixed_lon=(_boot_config.fixed_lon if _boot_config else None),
     )
     _gps.start()
 

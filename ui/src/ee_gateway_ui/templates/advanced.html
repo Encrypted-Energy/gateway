@@ -1,0 +1,55 @@
+{# EE Gateway UI advanced settings. GPL-3.0-only; see LICENSE at the repository root. #}
+{% extends "base.html" %}
+{% block title %}Advanced settings, EE Gateway{% endblock %}
+{% block topbar_actions %}<span class="route-chip">/advanced</span>{% endblock %}
+
+{% block content %}
+<section class="card reveal" data-reveal="1">
+  <div class="card-head">
+    <div class="card-head-text">
+      <span class="eyebrow">Advanced</span>
+      <h1 class="card-title">Fixed location override</h1>
+      <p class="card-sub">
+        Pin this gateway to a fixed coordinate. The worker will stamp every
+        forwarded packet with this location and ignore the GPS dongle. Useful
+        for indoor or kiosk-mounted gateways where GPS can't see sky, or
+        while waiting on replacement hardware. Leave both fields blank to
+        disable and return to live GPS.
+      </p>
+    </div>
+  </div>
+
+  {% if error %}
+  <p class="alert" role="alert">{{ error }}</p>
+  {% endif %}
+
+  {% if saved %}
+  <p class="alert alert-success" role="status">
+    Saved. The worker is restarting; the new setting takes effect within a few seconds.
+  </p>
+  {% endif %}
+
+  <form class="form" method="post" action="{{ url_for('save_advanced') }}" autocomplete="off">
+    <label class="field">
+      <span class="field-label">Latitude</span>
+      <input class="field-input" type="text" name="fixed_lat" value="{{ fixed_lat }}"
+             placeholder="40.712082" inputmode="decimal" spellcheck="false"
+             autocomplete="off">
+      <span class="field-hint">Decimal degrees, -90 to 90.</span>
+    </label>
+
+    <label class="field">
+      <span class="field-label">Longitude</span>
+      <input class="field-input" type="text" name="fixed_lon" value="{{ fixed_lon }}"
+             placeholder="-74.040900" inputmode="decimal" spellcheck="false"
+             autocomplete="off">
+      <span class="field-hint">Decimal degrees, -180 to 180.</span>
+    </label>
+
+    <div class="form-actions">
+      <button class="btn btn-primary btn-block" type="submit">Save</button>
+      <a class="btn btn-ghost" href="{{ url_for('index') }}">Back to dashboard</a>
+    </div>
+  </form>
+</section>
+{% endblock %}

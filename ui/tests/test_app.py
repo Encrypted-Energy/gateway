@@ -317,3 +317,110 @@ def test_restart_button_only_appears_on_dashboard(client, tmp_path):
     response = client.get("/setup")
     assert b"Restart worker" not in response.data
 
+
+
+# --------------------------------------------------------------------------
+# /advanced — fixed-location override (0.5.0+)
+# --------------------------------------------------------------------------
+
+def test_advanced_get_renders_empty_when_no_override(client, tmp_path):
+    """GET /advanced shows the form with blank fields when nothing is set."""
+    response = client.get("/advanced")
+    assert response.status_code == 200
+    body = response.data.decode("utf-8")
+    assert "Fixed location override" in body
+    # No prefilled value
+    assert 'value=""' in body or 'value=""' in body  # both inputs empty
+
+
+def test_advanced_get_prefills_when_override_set(client, tmp_path):
+    """GET /advanced prefills the form from config.json."""
+    (tmp_path / "config.json").write_text(
+        json.dumps({
+            "org_id": "org-abc",
+            "api_token": "tok-xyz",
+            "fixed_lat": 40.712082,
+            "fixed_lon": -74.0409,
+        }),
+        encoding="utf-8",
+    )
+    response = client.get("/advanced")
+    body = response.data.decode("utf-8")
+    assert "40.712082" in body
+    assert "-74.0409" in body
+
+
+def test_advanced_post_valid_saves_and_restarts(client, tmp_path):
+    """Valid lat/lon writes to config.json and touches the restart sentinel."""
+    # Pre-populate creds so the merge doesn't clobber them.
+    (tmp_path / "config.json").write_text(
+        json.dumps({"org_id": "org-abc", "api_token": "tok-xyz"}),
+        encoding="utf-8",
+    )
+    response = client.post("/advanced", data={
+        "fixed_lat": "40.712082",
+        "fixed_lon": "-74.040900",
+    })
+    assert response.status_code == 200
+    assert b"Saved" in response.data
+
+    stored = json.loads((tmp_path / "config.json").read_text(encoding="utf-8"))
+    assert stored["fixed_lat"] == 40.712082
+    assert stored["fixed_lon"] == -74.0409
+    # Credentials must be preserved across the override save.
+    assert stored["org_id"] == "org-abc"
+    assert stored["api_token"] == "tok-xyz"
+    # Restart sentinel asks the worker to pick up the new mode.
+    assert (tmp_path / ".restart_requested").exists()
+
+
+def test_advanced_post_blank_both_clears_override(client, tmp_path):
+    """Both fields empty -> override removed from config.json."""
+    (tmp_path / "config.json").write_text(
+        json.dumps({
+            "org_id": "org-abc",
+            "api_token": "tok-xyz",
+            "fixed_lat": 1.0,
+            "fixed_lon": 2.0,
+        }),
+        encoding="utf-8",
+    )
+    response = client.post("/advanced", data={"fixed_lat": "", "fixed_lon": ""})
+    assert response.status_code == 200
+
+    stored = json.loads((tmp_path / "config.json").read_text(encoding="utf-8"))
+    assert "fixed_lat" not in stored
+    assert "fixed_lon" not in stored
+    # Credentials still preserved.
+    assert stored["org_id"] == "org-abc"
+
+
+def test_advanced_post_one_blank_is_error(client, tmp_path):
+    """Lat without lon (or vice versa) is a 400."""
+    response = client.post("/advanced", data={"fixed_lat": "40.7", "fixed_lon": ""})
+    assert response.status_code == 400
+    assert b"required" in response.data.lower()
+    # Nothing written.
+    assert not (tmp_path / "config.json").exists() or \
+        "fixed_lat" not in json.loads((tmp_path / "config.json").read_text(encoding="utf-8"))
+
+
+def test_advanced_post_non_numeric_is_error(client, tmp_path):
+    """Non-numeric input renders the form with an error and a 400."""
+    response = client.post("/advanced", data={"fixed_lat": "north", "fixed_lon": "west"})
+    assert response.status_code == 400
+    assert b"numeric" in response.data.lower()
+
+
+def test_advanced_post_lat_out_of_range_is_error(client, tmp_path):
+    """Lat > 90 rejected."""
+    response = client.post("/advanced", data={"fixed_lat": "95.0", "fixed_lon": "0.0"})
+    assert response.status_code == 400
+    assert b"latitude" in response.data.lower()
+
+
+def test_advanced_post_lon_out_of_range_is_error(client, tmp_path):
+    """Lon < -180 rejected."""
+    response = client.post("/advanced", data={"fixed_lat": "0.0", "fixed_lon": "-181.0"})
+    assert response.status_code == 400
+    assert b"longitude" in response.data.lower()
