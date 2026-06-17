@@ -319,6 +319,17 @@ def create_app(data_dir=None):
     app = Flask(__name__)
     app.config["EE_DATA_DIR"] = data_dir
 
+    # Inject the gateway version into every template so the brand line in
+    # base.html can show what's actually running. Sourced from the
+    # EE_GATEWAY_VERSION env var (passed by the umbrel compose); falls back
+    # to "" (which the template then renders as nothing) when unset, so
+    # local dev runs don't show a stale or wrong number.
+    gateway_version = os.environ.get("EE_GATEWAY_VERSION", "").strip()
+
+    @app.context_processor
+    def inject_version():
+        return {"gateway_version": gateway_version}
+
     @app.route("/healthz")
     def healthz():
         """Liveness probe for the container / app proxy."""
