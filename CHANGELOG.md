@@ -6,6 +6,14 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- Gateway 0.8.1 (worker 0.7.3 + UI 0.4.1): worker now forwards each
+  packet's device EID (hex string) to EE in the ingest body. EE uses
+  it server-side to enforce a 1-bounty-per-(device, org, day) cap as
+  an anti-abuse measure (a bad actor running many gateways covering
+  the same device can no longer credit-stack on that device's many
+  distinct packets). Body field is additive; older EE versions
+  silently ignore the unknown field, so the worker stays
+  forward-compatible.
 - Gateway 0.8.0 (worker 0.7.2 + UI 0.4.1): two QoL improvements bundled.
   Worker entrypoint now auto-discovers the GPS dongle across both common
   USB-serial families — `/dev/ttyUSB*` (PL2303-class) and `/dev/ttyACM*`

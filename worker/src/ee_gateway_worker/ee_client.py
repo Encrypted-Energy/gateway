@@ -75,25 +75,32 @@ def ingest_packet(
     timestamp: int | None,
     latitude: float = 90.0,
     longitude: float = 0.0,
+    eid: str | None = None,
 ) -> None:
     """POST one packet to EE for forwarding to Hubble.
 
     Coordinates default to (90, 0) for parity with the Hubble SDK's
     placeholder. They will be replaced by live GPS reads in Gateway 0.5.0.
+
+    ``eid`` (0.7.3+) is the hex device identifier the worker extracted
+    locally. EE uses it to enforce a per-(org, device, day) bounty cap.
+    Omitted from the body when None so backward-compat with EE versions
+    that don't expect the field is preserved (extra fields are silently
+    accepted regardless).
     """
     url = base_url.rstrip("/") + PACKETS_PATH
 
-    body = {
-        "packets": [
-            {
-                "payload_b64": payload_b64,
-                "rssi": rssi,
-                "timestamp": timestamp,
-                "latitude": latitude,
-                "longitude": longitude,
-            }
-        ]
+    packet = {
+        "payload_b64": payload_b64,
+        "rssi": rssi,
+        "timestamp": timestamp,
+        "latitude": latitude,
+        "longitude": longitude,
     }
+    if eid is not None:
+        packet["eid"] = eid
+
+    body = {"packets": [packet]}
 
     request = urllib.request.Request(
         url,
