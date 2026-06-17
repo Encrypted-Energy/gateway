@@ -48,8 +48,10 @@
 
     <div class="form-actions">
       <button class="btn btn-primary btn-block" type="submit">Save</button>
-      <a class="btn btn-ghost" href="{{ url_for('index') }}">Back to dashboard</a>
     </div>
+    <p style="margin: 14px 0 0; font-size: 13px; text-align: center;">
+      <a class="link-quiet" href="{{ url_for('index') }}">&larr; Back to dashboard</a>
+    </p>
   </form>
 </section>
 {% endblock %}

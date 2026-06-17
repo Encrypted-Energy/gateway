@@ -278,6 +278,37 @@ def _format_epoch(value):
         return "-"
 
 
+def _format_epoch_relative(value, now=None):
+    """Render an epoch-seconds value as a short relative phrase ('30s ago',
+    '2 min ago', '3 hours ago'). Returns ``"-"`` for invalid input.
+
+    Operators glance at the dashboard to answer 'is anything happening?';
+    a relative phrase answers that question faster than reading an
+    absolute timestamp and computing the delta in your head.
+    """
+    if value is None:
+        return "-"
+    try:
+        ts = float(value)
+    except (TypeError, ValueError):
+        return "-"
+    delta = (time.time() if now is None else now) - ts
+    if delta < 0:
+        # Clock skew between worker and UI containers; just show absolute.
+        return _format_epoch(value)
+    if delta < 60:
+        n = int(delta)
+        return "just now" if n < 2 else f"{n}s ago"
+    if delta < 3600:
+        n = int(delta // 60)
+        return "1 min ago" if n == 1 else f"{n} min ago"
+    if delta < 86400:
+        n = int(delta // 3600)
+        return "1 hour ago" if n == 1 else f"{n} hours ago"
+    n = int(delta // 86400)
+    return "1 day ago" if n == 1 else f"{n} days ago"
+
+
 def _status_view(state):
     """Translate the worker's state file into display fields for the badge."""
     if not state:
@@ -397,12 +428,18 @@ def create_app(data_dir=None):
         state = read_state(data_dir)
         raw_config = _read_json(_config_path(data_dir))
         status = _apply_verifying_override(_status_view(state), raw_config)
+        updated_at = state.get("updated_at") if state else None
+        fixed_lat, fixed_lon = read_advanced_config(data_dir)
         return render_template(
             "dashboard.html",
             status=status,
             counts=_counts_view(state),
             devices=read_devices(data_dir),
-            updated=_format_epoch(state.get("updated_at") if state else None),
+            updated=_format_epoch(updated_at),
+            updated_relative=_format_epoch_relative(updated_at),
+            fixed_location_active=(fixed_lat is not None and fixed_lon is not None),
+            fixed_lat=fixed_lat,
+            fixed_lon=fixed_lon,
         )
 
     @app.route("/setup")

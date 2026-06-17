@@ -6,6 +6,19 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- Gateway 0.9.1 (UI 0.5.1): dashboard readability pass. KPI tiles now
+  carry one-line subtitles so each number reads as meaning instead of
+  code: "Devices in range — heard in last 24h", "Packets — captured
+  this gateway", "Ingested — forwarded to Hubble", "Pending — waiting
+  to forward". The previous "In range" label was ambiguous (devices?
+  packets?); now matches the table heading below. Last-update time
+  switches from absolute timestamp to relative phrase ("a minute ago")
+  with absolute on hover. When the fixed-location override is active,
+  the dashboard surfaces a quiet badge showing the pinned coordinate
+  with a Change link, so the GPS pinning is no longer invisible from
+  the main view. /advanced page's "Back to dashboard" button demoted
+  to a centered link so it stops wrapping onto two lines on narrow
+  cards. Worker unchanged.
 - Gateway 0.9.0 (worker 0.7.4 + UI 0.5.0): persistent fixed-location
   override via the dashboard. New UI route `/advanced` with a form
   accepting decimal-degree latitude / longitude, range-validated

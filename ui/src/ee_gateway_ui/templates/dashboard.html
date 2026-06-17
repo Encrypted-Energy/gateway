@@ -16,7 +16,10 @@
 {% block content %}
 <section class="dash">
 
-  {# 1. Status header. One sentence of truth: are we running, and since when. #}
+  {# 1. Status header. One sentence of truth: are we running, and since when.
+     Last-update timestamp is shown as a relative phrase ('30s ago') with the
+     absolute time on hover — operators glance at this to answer "is anything
+     happening?", and a relative read answers that faster. #}
   <div class="card status-card reveal" data-reveal="0">
     <div>
       <span class="eyebrow">Gateway status</span>
@@ -24,7 +27,17 @@
       {% if status.error %}
       <p class="status-sub">{{ status.error }}</p>
       {% else %}
-      <p class="status-sub">Last worker update: {{ updated }}</p>
+      <p class="status-sub">
+        Last worker update:
+        <time title="{{ updated }}">{{ updated_relative }}</time>
+      </p>
+      {% endif %}
+      {% if fixed_location_active %}
+      <p class="status-sub" style="margin-top: 6px;">
+        <span class="pill pill-info" style="font-size: 11px; padding: 2px 8px;">Location override</span>
+        Pinned to ({{ fixed_lat }}, {{ fixed_lon }}). GPS dongle ignored.
+        <a class="link-quiet" href="{{ url_for('advanced') }}">Change</a>
+      </p>
       {% endif %}
     </div>
     <div class="status-card-actions">
@@ -43,16 +56,21 @@
     </div>
   </div>
 
-  {# 2. Four KPI tiles. Devices counter is the lime accent (the headline number). #}
+  {# 2. Four KPI tiles. Each carries a one-line subtitle so the operator
+     reads meaning, not just numbers. Devices-in-range is the lime accent
+     because it's the live activity signal — "is anything happening right
+     now?" — which is what most operators are checking when they open the
+     dashboard. #}
   <div class="kpis">
-    {% for label, value, accent in [
-        ('In range', counts.devices, true),
-        ('Packets',  counts.total,    false),
-        ('Ingested', counts.ingested, false),
-        ('Pending',  counts.pending,  false)] %}
+    {% for label, sublabel, value, accent in [
+        ('Devices in range', 'heard in last 24h',         counts.devices, true),
+        ('Packets',          'captured this gateway',     counts.total,    false),
+        ('Ingested',         'forwarded to Hubble',       counts.ingested, false),
+        ('Pending',          'waiting to forward',        counts.pending,  false)] %}
     <div class="kpi {% if accent %}kpi-accent{% endif %} reveal" data-reveal="{{ loop.index }}">
       <span class="kpi-label">{{ label }}</span>
       <span class="kpi-value">{{ value if value is not none else '-' }}</span>
+      <span class="kpi-sublabel">{{ sublabel }}</span>
     </div>
     {% endfor %}
   </div>

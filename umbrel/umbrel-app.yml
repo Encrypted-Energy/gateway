@@ -15,18 +15,18 @@ name: EE Gateway
 tagline: Self-hosted Hubble Network Bluetooth gateway
 icon: https://raw.githubusercontent.com/Encrypted-Energy/umbrel-community-app-store/main/encryptedenergy-ee-gateway/icon.svg
 category: Networking
-version: "0.9.0"
+version: "0.9.1"
 releaseNotes: >-
-  Persistent fixed-location override via the dashboard. A new
-  "Advanced" page lets you pin the gateway to a fixed coordinate
-  (latitude / longitude) — useful for indoor or kiosk-mounted
-  installs where GPS can't see sky, or while waiting on a
-  replacement dongle. The setting lives in your gateway's
-  config.json (in the app's persistent data volume), so it survives
-  app updates — no more compose-file edits getting wiped. Both
-  fields validated to standard decimal-degree ranges. Leave blank
-  to disable and return to live GPS. New worker image 0.7.4, new
-  UI image 0.5.0; manifest moves to 0.9.0.
+  Dashboard readability + small fixes. KPI tiles gain one-line
+  subtitles so each number reads as meaning instead of code
+  ("Devices in range — heard in last 24h", "Pending — waiting to
+  forward", etc.). Last-update time switches from absolute
+  timestamp to relative ("a minute ago") with absolute on hover.
+  When the location override is active, the dashboard now shows
+  a quiet badge with the pinned coordinate and a Change link.
+  Back-to-dashboard button on the Advanced page demoted to a
+  proper link so it stops wrapping onto two lines. UI image
+  0.5.1; worker stays at 0.7.4; manifest moves to 0.9.1.
 port: 8080
 description: >-
   EE Gateway turns your Umbrel into a self-hosted Hubble Network Bluetooth
