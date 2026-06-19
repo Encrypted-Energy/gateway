@@ -399,6 +399,36 @@ def test_dashboard_shows_counts_from_state_file(client, tmp_path):
     assert "7" in body
 
 
+def test_dashboard_renders_thousand_separators_on_large_counts(client, tmp_path):
+    """Counts in the thousands render with comma separators for readability."""
+    _write_full_config(tmp_path)
+    _write_state(tmp_path, {
+        "status": "running",
+        "packets": {"total": 16923, "ingested": 16921, "pending": 2, "devices": 6},
+    })
+    response = client.get("/")
+    body = response.data.decode("utf-8")
+    assert "16,923" in body
+    assert "16,921" in body
+
+
+def test_dashboard_renders_dash_for_missing_counts(client, tmp_path):
+    """A None count renders as `-` (the worker hasn't reported yet)."""
+    _write_full_config(tmp_path)
+    response = client.get("/")
+    body = response.data.decode("utf-8")
+    # No state.json -> counts are None -> dashes
+    assert body.count(">-<") >= 4   # one per KPI tile
+
+
+def test_dashboard_packets_label_says_30_days(client, tmp_path):
+    """KPI sublabel reflects the 30-day worker retention window."""
+    _write_full_config(tmp_path)
+    response = client.get("/")
+    body = response.data.decode("utf-8")
+    assert "captured in last 30 days" in body
+
+
 def test_dashboard_shows_location_pill(client, tmp_path):
     """Dashboard always shows the location pill now (location is required)."""
     _write_full_config(tmp_path)

@@ -6,6 +6,20 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- Gateway 0.10.2 (UI 0.6.2): polish pass on the setup wizard and
+  dashboard. Setup step 2 pre-fills the North Pole (90, 0) as an
+  obvious placeholder (replaces the 0.10.1 attempt at Hubble HQ,
+  which looked too much like a real location); EE's worker
+  already uses (90, 0) as its "no real location" sentinel, so an
+  unedited gateway is obviously spottable on any future coverage
+  map. Copy across setup.html, setup_location.html, and
+  settings_location.html rewritten to sound conversational and to
+  drop em dashes (and other artifacts that flagged on a copy-rules
+  pass). Dashboard KPIs render with thousand-separator commas now
+  (16,923 instead of 16923) via a new Jinja `thousands` filter.
+  Packets tile sublabel changed from "captured this gateway" to
+  "captured in last 30 days" so the number is read against the
+  worker's actual retention window. Worker unchanged.
 - Gateway 0.10.1 (UI 0.6.1): polish on the location pages added in
   0.10.0. Setup step 2 now pre-fills Hubble Network's Seattle HQ
   (47.61430270391947, -122.3191470665486) as a sensible default

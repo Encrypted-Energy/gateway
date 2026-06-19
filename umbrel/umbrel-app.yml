@@ -15,16 +15,17 @@ name: EE Gateway
 tagline: Self-hosted Hubble Network Bluetooth gateway
 icon: https://raw.githubusercontent.com/Encrypted-Energy/umbrel-community-app-store/main/encryptedenergy-ee-gateway/icon.svg
 category: Networking
-version: "0.10.1"
+version: "0.10.2"
 releaseNotes: >-
-  Polish on the location pages added in 0.10.0. Setup step 2 now
-  pre-fills Hubble Network's Seattle HQ as a sensible default so
-  the form is submittable as-is for operators who want to start
-  the gateway before nailing down their exact coordinates. Copy
-  on the Location settings page rewritten to drop the awkward
-  "where this gateway lives" phrasing and clarify the GPS-dongle
-  fallback. UI image 0.6.1; worker stays at 0.7.4; manifest
-  moves to 0.10.1.
+  Polish pass on the setup wizard and dashboard. Setup step 2
+  pre-fills the North Pole (90, 0) as an obvious placeholder so
+  any unedited gateway is easy to spot. Copy across setup,
+  Location settings, and the field hints rewritten to sound
+  conversational and to drop em dashes. Dashboard KPIs now
+  render with thousand-separator commas, and the Packets sublabel
+  clarifies the 30-day retention window ("captured in last 30
+  days"). UI image 0.6.2; worker stays at 0.7.4; manifest moves
+  to 0.10.2.
 port: 8080
 description: >-
   EE Gateway turns your Umbrel into a self-hosted Hubble Network Bluetooth
