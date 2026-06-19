@@ -59,7 +59,7 @@ services:
       EE_UI_PORT: 8080
       # Brand-line version shown in the dashboard header. Bump this when
       # the app manifest version bumps so the operator sees what's running.
-      EE_GATEWAY_VERSION: "0.10.2"
+      EE_GATEWAY_VERSION: "0.10.3"
 
   # BLE scan + GPS-stamped cloud ingest worker. It reaches the host's
   # Bluetooth radio through bluetoothd over the D-Bus system bus, talks to
