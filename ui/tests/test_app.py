@@ -11,6 +11,12 @@ The packet database is built here with raw SQL rather than by importing the
 worker. The UI container ships without the worker package installed, and the
 ``packet_log`` schema is a deliberate contract between the two halves: a test
 that re-declares the schema fails loudly if that contract drifts.
+
+From 0.6.0: setup is a two-step flow (credentials, then location). Tests that
+need the dashboard to render write BOTH halves via ``_write_full_config``;
+tests that need to exercise step-2 routing write only credentials.
+``verify_credentials`` is monkeypatched in the ``client`` fixture so /config
+POSTs don't actually try to reach encryptedenergy.com.
 """
 
 import json
@@ -72,9 +78,45 @@ def _write_state(data_dir, state):
     (data_dir / "state.json").write_text(json.dumps(state), encoding="utf-8")
 
 
+def _write_creds_only(data_dir, **overrides):
+    """Write a config.json with credentials but no location (step-1 done)."""
+    cfg = {"org_id": "org-abc", "api_token": "tok-xyz"}
+    cfg.update(overrides)
+    (data_dir / "config.json").write_text(json.dumps(cfg), encoding="utf-8")
+
+
+def _write_full_config(data_dir, **overrides):
+    """Write a config.json with credentials AND location (setup complete)."""
+    cfg = {
+        "org_id": "org-abc",
+        "api_token": "tok-xyz",
+        "fixed_lat": 40.712082,
+        "fixed_lon": -74.040900,
+    }
+    cfg.update(overrides)
+    (data_dir / "config.json").write_text(json.dumps(cfg), encoding="utf-8")
+
+
 @pytest.fixture
-def client(tmp_path):
-    """A Flask test client backed by an empty temporary data directory."""
+def client(tmp_path, monkeypatch):
+    """A Flask test client backed by an empty temporary data directory.
+
+    ``verify_credentials`` is monkeypatched to always succeed by default so
+    tests don't hit the real ee-web verify endpoint. Tests that exercise
+    the verification path explicitly override it via ``monkeypatch.setattr``.
+    """
+    monkeypatch.setattr(
+        "ee_gateway_ui.app.verify_credentials",
+        lambda base_url, api_token, timeout=8: (True, None, {
+            "ok": True,
+            "gateway": {
+                "name": "Test Gateway",
+                "public_id": "ee_gw_test",
+                "organization_id": "ee_org_test",
+                "organization_name": "Test Org",
+            },
+        }),
+    )
     app = create_app(data_dir=tmp_path)
     app.config["TESTING"] = True
     return app.test_client()
@@ -91,11 +133,11 @@ def test_healthz_returns_ok(client):
 
 
 # --------------------------------------------------------------------------
-# Setup wizard
+# Setup wizard step 1 (credentials)
 # --------------------------------------------------------------------------
 
-def test_index_unconfigured_shows_setup(client):
-    """With no config.json the root route is the setup wizard."""
+def test_index_unconfigured_shows_setup_step_1(client):
+    """With no config.json the root route is the credentials form."""
     response = client.get("/")
     assert response.status_code == 200
     # Use form-field labels as the durable marker; the page heading copy
@@ -103,23 +145,36 @@ def test_index_unconfigured_shows_setup(client):
     # test pinned to that wording silently rotted until 0.6.3.
     assert b"Organization ID" in response.data
     assert b"API token" in response.data
+    assert b"Step 1 of 2" in response.data
 
 
-def test_post_valid_config_redirects_and_persists(client, tmp_path):
-    """A valid POST writes config.json and redirects back to the dashboard."""
+def test_post_valid_config_redirects_to_step_2(client, tmp_path):
+    """A valid POST writes config.json and redirects to setup step 2."""
     response = client.post(
         "/config",
         data={"org_id": "org-abc", "api_token": "tok-xyz"},
     )
     assert response.status_code == 302
-    assert response.headers["Location"].endswith("/")
+    assert response.headers["Location"].endswith("/setup/location")
 
     saved = json.loads((tmp_path / "config.json").read_text(encoding="utf-8"))
-    # Credentials are persisted alongside a `saved_at` timestamp the
-    # dashboard uses to show an optimistic verifying state for a minute.
     assert saved["org_id"] == "org-abc"
     assert saved["api_token"] == "tok-xyz"
     assert isinstance(saved["saved_at"], int)
+    # Step 1 alone does NOT set a location yet.
+    assert "fixed_lat" not in saved
+
+
+def test_post_valid_config_skips_step_2_when_location_already_set(client, tmp_path):
+    """Reconfigure path: if location is already saved, skip step 2."""
+    _write_full_config(tmp_path)
+    response = client.post(
+        "/config",
+        data={"org_id": "org-new", "api_token": "tok-new"},
+    )
+    assert response.status_code == 302
+    # No /setup/location detour — straight to the dashboard.
+    assert response.headers["Location"].endswith("/")
 
 
 def test_post_blank_token_rejected_and_nothing_written(client, tmp_path):
@@ -133,12 +188,57 @@ def test_post_blank_token_rejected_and_nothing_written(client, tmp_path):
     assert not (tmp_path / "config.json").exists()
 
 
+def test_post_bad_credentials_rejected_inline(tmp_path, monkeypatch):
+    """A verify-failed POST renders the form with the verify error and 400."""
+    # Override the default-success stub for this test.
+    monkeypatch.setattr(
+        "ee_gateway_ui.app.verify_credentials",
+        lambda base_url, api_token, timeout=8: (
+            False,
+            "The API token was rejected. Check that the token matches the gateway page on encryptedenergy.com.",
+            None,
+        ),
+    )
+    app = create_app(data_dir=tmp_path)
+    app.config["TESTING"] = True
+    client = app.test_client()
+
+    response = client.post(
+        "/config",
+        data={"org_id": "org-abc", "api_token": "tok-wrong"},
+    )
+    assert response.status_code == 400
+    assert b"rejected" in response.data
+    # Critically: nothing persisted.
+    assert not (tmp_path / "config.json").exists()
+
+
+def test_post_verify_network_failure_rejected_inline(tmp_path, monkeypatch):
+    """Network failure during verify is surfaced as a user-facing error."""
+    monkeypatch.setattr(
+        "ee_gateway_ui.app.verify_credentials",
+        lambda base_url, api_token, timeout=8: (
+            False,
+            "Could not reach Encrypted Energy: network down. Check the gateway's internet connection.",
+            None,
+        ),
+    )
+    app = create_app(data_dir=tmp_path)
+    app.config["TESTING"] = True
+    client = app.test_client()
+
+    response = client.post(
+        "/config",
+        data={"org_id": "org-abc", "api_token": "tok-xyz"},
+    )
+    assert response.status_code == 400
+    assert b"Could not reach" in response.data
+    assert not (tmp_path / "config.json").exists()
+
+
 def test_setup_prefills_org_id_but_never_echoes_token(client, tmp_path):
     """/setup pre-fills a stored org ID but never reveals the saved token."""
-    (tmp_path / "config.json").write_text(
-        json.dumps({"org_id": "org-visible", "api_token": "tok-secret-9999"}),
-        encoding="utf-8",
-    )
+    _write_creds_only(tmp_path, org_id="org-visible", api_token="tok-secret-9999")
     response = client.get("/setup")
     assert response.status_code == 200
     assert b"org-visible" in response.data
@@ -146,15 +246,102 @@ def test_setup_prefills_org_id_but_never_echoes_token(client, tmp_path):
 
 
 # --------------------------------------------------------------------------
-# Dashboard
+# Setup wizard step 2 (location)
+# --------------------------------------------------------------------------
+
+def test_index_with_creds_no_location_shows_setup_location(client, tmp_path):
+    """Credentials saved but no location -> step 2 form on /."""
+    _write_creds_only(tmp_path)
+    response = client.get("/")
+    assert response.status_code == 200
+    assert b"Step 2 of 2" in response.data
+    assert b"Where is this gateway" in response.data
+
+
+def test_setup_location_get_renders_form(client, tmp_path):
+    """GET /setup/location renders the form with empty fields."""
+    _write_creds_only(tmp_path)
+    response = client.get("/setup/location")
+    assert response.status_code == 200
+    assert b"Step 2 of 2" in response.data
+
+
+def test_setup_location_get_bounces_to_step_1_when_no_creds(client, tmp_path):
+    """Without credentials, /setup/location redirects to credentials form."""
+    response = client.get("/setup/location")
+    assert response.status_code == 302
+    assert response.headers["Location"].endswith("/setup")
+
+
+def test_setup_location_post_valid_saves_and_advances_to_dashboard(client, tmp_path):
+    """A valid location POST writes config and redirects to /."""
+    _write_creds_only(tmp_path)
+    response = client.post(
+        "/setup/location",
+        data={"fixed_lat": "40.712082", "fixed_lon": "-74.040900"},
+    )
+    assert response.status_code == 302
+    assert response.headers["Location"].endswith("/")
+
+    saved = json.loads((tmp_path / "config.json").read_text(encoding="utf-8"))
+    assert saved["fixed_lat"] == 40.712082
+    assert saved["fixed_lon"] == -74.0409
+    # Credentials preserved across the merge.
+    assert saved["org_id"] == "org-abc"
+    # Restart sentinel touched so worker picks up the new mode.
+    assert (tmp_path / ".restart_requested").exists()
+
+
+def test_setup_location_post_bounces_to_step_1_when_no_creds(client, tmp_path):
+    """Without credentials, POST /setup/location redirects to credentials form."""
+    response = client.post(
+        "/setup/location",
+        data={"fixed_lat": "40.7", "fixed_lon": "-74.0"},
+    )
+    assert response.status_code == 302
+    assert response.headers["Location"].endswith("/setup")
+    # Nothing written.
+    assert not (tmp_path / "config.json").exists()
+
+
+def test_setup_location_post_blank_is_error(client, tmp_path):
+    """Both blank rejected with 400 (no clear path on setup step 2)."""
+    _write_creds_only(tmp_path)
+    response = client.post(
+        "/setup/location",
+        data={"fixed_lat": "", "fixed_lon": ""},
+    )
+    assert response.status_code == 400
+    assert b"required" in response.data.lower()
+
+
+def test_setup_location_post_lat_out_of_range_is_error(client, tmp_path):
+    _write_creds_only(tmp_path)
+    response = client.post(
+        "/setup/location",
+        data={"fixed_lat": "95.0", "fixed_lon": "0.0"},
+    )
+    assert response.status_code == 400
+    assert b"latitude" in response.data.lower()
+
+
+def test_setup_location_post_non_numeric_is_error(client, tmp_path):
+    _write_creds_only(tmp_path)
+    response = client.post(
+        "/setup/location",
+        data={"fixed_lat": "north", "fixed_lon": "west"},
+    )
+    assert response.status_code == 400
+    assert b"numeric" in response.data.lower()
+
+
+# --------------------------------------------------------------------------
+# Dashboard (only renders when BOTH creds and location are set)
 # --------------------------------------------------------------------------
 
 def test_index_configured_shows_dashboard(client, tmp_path):
-    """Once credentials exist the root route becomes the dashboard."""
-    (tmp_path / "config.json").write_text(
-        json.dumps({"org_id": "org-abc", "api_token": "tok-xyz"}),
-        encoding="utf-8",
-    )
+    """Once both credentials and location exist, root is the dashboard."""
+    _write_full_config(tmp_path)
     response = client.get("/")
     assert response.status_code == 200
     assert b"Devices in range" in response.data
@@ -162,10 +349,7 @@ def test_index_configured_shows_dashboard(client, tmp_path):
 
 def test_dashboard_survives_missing_worker_files(client, tmp_path):
     """Configured, but no state.json and no packets.db: still renders."""
-    (tmp_path / "config.json").write_text(
-        json.dumps({"org_id": "org-abc", "api_token": "tok-xyz"}),
-        encoding="utf-8",
-    )
+    _write_full_config(tmp_path)
     response = client.get("/")
     assert response.status_code == 200
     assert b"Worker not reporting yet" in response.data
@@ -174,10 +358,7 @@ def test_dashboard_survives_missing_worker_files(client, tmp_path):
 
 def test_dashboard_lists_devices_from_packet_db(client, tmp_path):
     """A device that appears in packets.db is rendered in the table."""
-    (tmp_path / "config.json").write_text(
-        json.dumps({"org_id": "org-abc", "api_token": "tok-xyz"}),
-        encoding="utf-8",
-    )
+    _write_full_config(tmp_path)
     _make_packet_db(
         tmp_path / "packets.db",
         [
@@ -189,17 +370,13 @@ def test_dashboard_lists_devices_from_packet_db(client, tmp_path):
     assert response.status_code == 200
     body = response.data.decode("utf-8")
     assert "a290802a" in body
-    # Two packets for the one device, newest RSSI from the highest-id row.
     assert "-53" in body
     assert "No devices yet" not in body
 
 
 def test_dashboard_shows_counts_from_state_file(client, tmp_path):
     """Headline counters are read straight out of state.json."""
-    (tmp_path / "config.json").write_text(
-        json.dumps({"org_id": "org-abc", "api_token": "tok-xyz"}),
-        encoding="utf-8",
-    )
+    _write_full_config(tmp_path)
     _write_state(
         tmp_path,
         {
@@ -222,64 +399,49 @@ def test_dashboard_shows_counts_from_state_file(client, tmp_path):
     assert "7" in body
 
 
+def test_dashboard_shows_location_pill(client, tmp_path):
+    """Dashboard always shows the location pill now (location is required)."""
+    _write_full_config(tmp_path)
+    response = client.get("/")
+    body = response.data.decode("utf-8")
+    assert "Location" in body
+    assert "40.712082" in body
+    assert "-74.0409" in body
+
+
 # --------------------------------------------------------------------------
-# Verifying-credentials optimistic state (0.6.3+)
+# Verifying-credentials optimistic state
 # --------------------------------------------------------------------------
 
 def test_dashboard_shows_verifying_when_creds_just_saved(client, tmp_path):
     """Within the verifying window, dashboard masks the worker stale state."""
     import time as _time
-    (tmp_path / "config.json").write_text(
-        json.dumps({
-            "org_id": "org-abc",
-            "api_token": "tok-xyz",
-            "saved_at": int(_time.time()) - 5,  # 5s ago, well inside window
-        }),
-        encoding="utf-8",
-    )
-    # Worker is still reporting needs_setup (its old config-poll cycle)
+    _write_full_config(tmp_path, saved_at=int(_time.time()) - 5)
     _write_state(tmp_path, {"status": "needs_setup", "error": "missing"})
 
     response = client.get("/")
     body = response.data.decode("utf-8")
     assert "Verifying credentials" in body
-    # Optimistic state never surfaces the underlying error message.
     assert "missing" not in body
-    # Page auto-refreshes during verification.
     assert "http-equiv=\"refresh\"" in body
 
 
 def test_dashboard_skips_verifying_after_window_expires(client, tmp_path):
     """Once the 60-second window has passed, dashboard shows worker truth."""
     import time as _time
-    (tmp_path / "config.json").write_text(
-        json.dumps({
-            "org_id": "org-abc",
-            "api_token": "tok-xyz",
-            "saved_at": int(_time.time()) - 120,  # 2 minutes ago
-        }),
-        encoding="utf-8",
-    )
+    _write_full_config(tmp_path, saved_at=int(_time.time()) - 120)
     _write_state(tmp_path, {"status": "needs_setup", "error": "missing creds"})
 
     response = client.get("/")
     body = response.data.decode("utf-8")
     assert "Verifying credentials" not in body
-    # Real status visible — the operator can debug it.
     assert "Waiting for credentials" in body
 
 
 def test_dashboard_skips_verifying_when_worker_already_running(client, tmp_path):
     """If worker is healthy, never show the optimistic state."""
     import time as _time
-    (tmp_path / "config.json").write_text(
-        json.dumps({
-            "org_id": "org-abc",
-            "api_token": "tok-xyz",
-            "saved_at": int(_time.time()),  # just now
-        }),
-        encoding="utf-8",
-    )
+    _write_full_config(tmp_path, saved_at=int(_time.time()))
     _write_state(tmp_path, {
         "status": "running",
         "packets": {"total": 1, "ingested": 1, "pending": 0, "devices": 1},
@@ -292,7 +454,7 @@ def test_dashboard_skips_verifying_when_worker_already_running(client, tmp_path)
 
 
 # --------------------------------------------------------------------------
-# Restart-worker button (0.6.3+)
+# Restart-worker button
 # --------------------------------------------------------------------------
 
 def test_restart_touches_sentinel_and_redirects(client, tmp_path):
@@ -305,59 +467,39 @@ def test_restart_touches_sentinel_and_redirects(client, tmp_path):
 
 def test_restart_button_only_appears_on_dashboard(client, tmp_path):
     """The button is on the dashboard, not the setup wizard."""
-    # Configured: dashboard
-    (tmp_path / "config.json").write_text(
-        json.dumps({"org_id": "org-abc", "api_token": "tok-xyz"}),
-        encoding="utf-8",
-    )
+    _write_full_config(tmp_path)
     response = client.get("/")
     assert b"Restart worker" in response.data
 
-    # Reconfigure path
     response = client.get("/setup")
     assert b"Restart worker" not in response.data
 
 
-
 # --------------------------------------------------------------------------
-# /advanced — fixed-location override (0.5.0+)
+# /settings/location (renamed from /advanced in 0.6.0)
 # --------------------------------------------------------------------------
 
-def test_advanced_get_renders_empty_when_no_override(client, tmp_path):
-    """GET /advanced shows the form with blank fields when nothing is set."""
-    response = client.get("/advanced")
+def test_settings_location_get_renders_empty_when_no_override(client, tmp_path):
+    """GET /settings/location shows the form with blank fields when nothing set."""
+    response = client.get("/settings/location")
     assert response.status_code == 200
     body = response.data.decode("utf-8")
-    assert "Fixed location override" in body
-    # No prefilled value
-    assert 'value=""' in body or 'value=""' in body  # both inputs empty
+    assert "Gateway location" in body
 
 
-def test_advanced_get_prefills_when_override_set(client, tmp_path):
-    """GET /advanced prefills the form from config.json."""
-    (tmp_path / "config.json").write_text(
-        json.dumps({
-            "org_id": "org-abc",
-            "api_token": "tok-xyz",
-            "fixed_lat": 40.712082,
-            "fixed_lon": -74.0409,
-        }),
-        encoding="utf-8",
-    )
-    response = client.get("/advanced")
+def test_settings_location_get_prefills_when_set(client, tmp_path):
+    """GET /settings/location prefills the form from config.json."""
+    _write_full_config(tmp_path)
+    response = client.get("/settings/location")
     body = response.data.decode("utf-8")
     assert "40.712082" in body
     assert "-74.0409" in body
 
 
-def test_advanced_post_valid_saves_and_restarts(client, tmp_path):
+def test_settings_location_post_valid_saves_and_restarts(client, tmp_path):
     """Valid lat/lon writes to config.json and touches the restart sentinel."""
-    # Pre-populate creds so the merge doesn't clobber them.
-    (tmp_path / "config.json").write_text(
-        json.dumps({"org_id": "org-abc", "api_token": "tok-xyz"}),
-        encoding="utf-8",
-    )
-    response = client.post("/advanced", data={
+    _write_creds_only(tmp_path)
+    response = client.post("/settings/location", data={
         "fixed_lat": "40.712082",
         "fixed_lon": "-74.040900",
     })
@@ -367,60 +509,63 @@ def test_advanced_post_valid_saves_and_restarts(client, tmp_path):
     stored = json.loads((tmp_path / "config.json").read_text(encoding="utf-8"))
     assert stored["fixed_lat"] == 40.712082
     assert stored["fixed_lon"] == -74.0409
-    # Credentials must be preserved across the override save.
     assert stored["org_id"] == "org-abc"
     assert stored["api_token"] == "tok-xyz"
-    # Restart sentinel asks the worker to pick up the new mode.
     assert (tmp_path / ".restart_requested").exists()
 
 
-def test_advanced_post_blank_both_clears_override(client, tmp_path):
+def test_settings_location_post_blank_both_clears(client, tmp_path):
     """Both fields empty -> override removed from config.json."""
-    (tmp_path / "config.json").write_text(
-        json.dumps({
-            "org_id": "org-abc",
-            "api_token": "tok-xyz",
-            "fixed_lat": 1.0,
-            "fixed_lon": 2.0,
-        }),
-        encoding="utf-8",
-    )
-    response = client.post("/advanced", data={"fixed_lat": "", "fixed_lon": ""})
+    _write_full_config(tmp_path)
+    response = client.post("/settings/location", data={"fixed_lat": "", "fixed_lon": ""})
     assert response.status_code == 200
 
     stored = json.loads((tmp_path / "config.json").read_text(encoding="utf-8"))
     assert "fixed_lat" not in stored
     assert "fixed_lon" not in stored
-    # Credentials still preserved.
     assert stored["org_id"] == "org-abc"
 
 
-def test_advanced_post_one_blank_is_error(client, tmp_path):
+def test_settings_location_post_one_blank_is_error(client, tmp_path):
     """Lat without lon (or vice versa) is a 400."""
-    response = client.post("/advanced", data={"fixed_lat": "40.7", "fixed_lon": ""})
+    response = client.post("/settings/location", data={"fixed_lat": "40.7", "fixed_lon": ""})
     assert response.status_code == 400
     assert b"required" in response.data.lower()
-    # Nothing written.
-    assert not (tmp_path / "config.json").exists() or \
-        "fixed_lat" not in json.loads((tmp_path / "config.json").read_text(encoding="utf-8"))
 
 
-def test_advanced_post_non_numeric_is_error(client, tmp_path):
-    """Non-numeric input renders the form with an error and a 400."""
-    response = client.post("/advanced", data={"fixed_lat": "north", "fixed_lon": "west"})
+def test_settings_location_post_non_numeric_is_error(client, tmp_path):
+    response = client.post("/settings/location", data={"fixed_lat": "north", "fixed_lon": "west"})
     assert response.status_code == 400
     assert b"numeric" in response.data.lower()
 
 
-def test_advanced_post_lat_out_of_range_is_error(client, tmp_path):
-    """Lat > 90 rejected."""
-    response = client.post("/advanced", data={"fixed_lat": "95.0", "fixed_lon": "0.0"})
+def test_settings_location_post_lat_out_of_range_is_error(client, tmp_path):
+    response = client.post("/settings/location", data={"fixed_lat": "95.0", "fixed_lon": "0.0"})
     assert response.status_code == 400
     assert b"latitude" in response.data.lower()
 
 
-def test_advanced_post_lon_out_of_range_is_error(client, tmp_path):
-    """Lon < -180 rejected."""
-    response = client.post("/advanced", data={"fixed_lat": "0.0", "fixed_lon": "-181.0"})
+def test_settings_location_post_lon_out_of_range_is_error(client, tmp_path):
+    response = client.post("/settings/location", data={"fixed_lat": "0.0", "fixed_lon": "-181.0"})
     assert response.status_code == 400
     assert b"longitude" in response.data.lower()
+
+
+# --------------------------------------------------------------------------
+# /advanced backward-compat redirect
+# --------------------------------------------------------------------------
+
+def test_advanced_get_redirects_to_settings_location(client, tmp_path):
+    """Old /advanced bookmarks land on /settings/location via 308."""
+    response = client.get("/advanced", follow_redirects=False)
+    assert response.status_code == 308
+    assert response.headers["Location"].endswith("/settings/location")
+
+
+def test_advanced_post_redirects_to_settings_location(client, tmp_path):
+    """308 preserves POST so a save against the old URL still lands correctly."""
+    response = client.post("/advanced",
+                           data={"fixed_lat": "40.7", "fixed_lon": "-74.0"},
+                           follow_redirects=False)
+    assert response.status_code == 308
+    assert response.headers["Location"].endswith("/settings/location")

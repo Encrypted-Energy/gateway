@@ -37,6 +37,8 @@ import os
 import sqlite3
 import tempfile
 import time
+import urllib.error
+import urllib.request
 from datetime import datetime
 from pathlib import Path
 
@@ -44,6 +46,17 @@ from flask import Flask, redirect, render_template, request, url_for
 
 DEFAULT_DATA_DIR = "/data"
 DEFAULT_PORT = 8080
+
+# Where the UI sends the synchronous credential-verification request during
+# setup step 1. Mirrors the worker's DEFAULT_EE_BASE_URL — a dev pointed at a
+# local Rails server (or staging) sees both halves of the gateway go to the
+# same place via the EE_BASE_URL env var. Production gets the canonical URL.
+EE_BASE_URL_DEFAULT = "https://encryptedenergy.com"
+
+# How long to wait for ee-web's /api/v1/gateways/verify before giving up.
+# Generous enough to absorb a slow Heroku dyno wake, tight enough that an
+# operator on a bad network doesn't sit on the setup form for a full minute.
+VERIFY_TIMEOUT_SECONDS = 8
 
 # After a credentials save, the UI presents an optimistic "Verifying
 # credentials" state for this many seconds even if the worker's state.json
@@ -264,6 +277,88 @@ def read_advanced_config(data_dir):
     return float(lat), float(lon)
 
 
+def is_setup_complete(data_dir):
+    """True iff both credentials AND location are configured.
+
+    From 0.6.0, location is a required setup step (Step 2 of 2). The
+    dashboard only renders when both halves are in place; otherwise the
+    operator is bounced to whichever step is missing.
+    """
+    if read_config(data_dir) is None:
+        return False
+    lat, lon = read_advanced_config(data_dir)
+    return lat is not None and lon is not None
+
+
+# --------------------------------------------------------------------------
+# Credential verification (0.6.0+)
+# --------------------------------------------------------------------------
+
+def verify_credentials(base_url, api_token, timeout=VERIFY_TIMEOUT_SECONDS):
+    """Validate ``api_token`` against ee-web's ``/api/v1/gateways/verify``.
+
+    Called synchronously by the setup form's POST handler so the operator
+    learns about bad credentials inline at submit time instead of ~30-60s
+    later from the dashboard's auth_error badge.
+
+    Returns ``(ok, error_message, payload)``:
+
+    * ``(True, None, dict)`` — token is valid. ``payload`` is the parsed
+      JSON response and includes ``gateway`` (name, public_id,
+      organization_id, organization_name).
+    * ``(False, error_message, None)`` — verification failed. The error
+      message is user-facing and suitable for rendering directly on the
+      setup form.
+
+    Designed to never raise. A bug here must never block setup; on any
+    unexpected exception we return a generic error and let the operator
+    try again. Module-level so tests can monkeypatch it cleanly.
+    """
+    url = base_url.rstrip("/") + "/api/v1/gateways/verify"
+    req = urllib.request.Request(
+        url,
+        headers={
+            "Authorization": f"Bearer {api_token}",
+            "Accept": "application/json",
+            "User-Agent": "ee-gateway-ui",
+        },
+        method="GET",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            body_bytes = resp.read()
+        try:
+            payload = json.loads(body_bytes.decode("utf-8"))
+        except (UnicodeDecodeError, ValueError):
+            return False, "Encrypted Energy returned an unexpected response.", None
+        if not isinstance(payload, dict) or not payload.get("ok"):
+            return False, "Encrypted Energy returned an unexpected response.", None
+        return True, None, payload
+    except urllib.error.HTTPError as exc:
+        if exc.code == 401:
+            return False, (
+                "The API token was rejected. Check that the token matches "
+                "the gateway page on encryptedenergy.com."
+            ), None
+        if 500 <= exc.code < 600:
+            return False, (
+                "Encrypted Energy is temporarily unavailable. Try again in a moment."
+            ), None
+        return False, f"Unexpected response from Encrypted Energy (HTTP {exc.code}).", None
+    except urllib.error.URLError as exc:
+        return False, (
+            f"Could not reach Encrypted Energy to verify the token "
+            f"({exc.reason}). Check the gateway's internet connection."
+        ), None
+    except (TimeoutError, OSError) as exc:
+        return False, (
+            f"Could not reach Encrypted Energy: {exc}. "
+            "Check the gateway's internet connection."
+        ), None
+    except Exception as exc:  # pragma: no cover — defense in depth
+        return False, f"Verification failed unexpectedly: {exc}", None
+
+
 # --------------------------------------------------------------------------
 # View helpers
 # --------------------------------------------------------------------------
@@ -419,17 +514,33 @@ def create_app(data_dir=None):
 
     @app.route("/")
     def index():
-        """Setup wizard when unconfigured, dashboard once credentials exist."""
+        """Route to the appropriate page based on setup progress:
+
+        * no credentials       -> setup step 1 (credentials)
+        * credentials, no loc  -> setup step 2 (location)
+        * both set             -> dashboard
+
+        From 0.6.0 location is a required setup step. Operators cannot
+        bypass step 2 by visiting / directly — the dashboard simply
+        won't render until location is also configured.
+        """
         config = read_config(data_dir)
         if config is None:
             return render_template(
                 "setup.html", org_id="", error=None, configured=False
             )
+        fixed_lat, fixed_lon = read_advanced_config(data_dir)
+        if fixed_lat is None or fixed_lon is None:
+            return render_template(
+                "setup_location.html",
+                fixed_lat="",
+                fixed_lon="",
+                error=None,
+            )
         state = read_state(data_dir)
         raw_config = _read_json(_config_path(data_dir))
         status = _apply_verifying_override(_status_view(state), raw_config)
         updated_at = state.get("updated_at") if state else None
-        fixed_lat, fixed_lon = read_advanced_config(data_dir)
         return render_template(
             "dashboard.html",
             status=status,
@@ -437,7 +548,9 @@ def create_app(data_dir=None):
             devices=read_devices(data_dir),
             updated=_format_epoch(updated_at),
             updated_relative=_format_epoch_relative(updated_at),
-            fixed_location_active=(fixed_lat is not None and fixed_lon is not None),
+            # By the time the dashboard renders, location is always set
+            # (the branch above guarantees it).
+            fixed_location_active=True,
             fixed_lat=fixed_lat,
             fixed_lon=fixed_lon,
         )
@@ -482,7 +595,16 @@ def create_app(data_dir=None):
 
     @app.route("/config", methods=["POST"])
     def save_config():
-        """Validate and persist submitted credentials, then return to ``/``."""
+        """Validate the submitted credentials against ee-web, then persist.
+
+        From 0.6.0 the UI calls ee-web's ``/api/v1/gateways/verify`` before
+        writing anything to ``config.json``. A bad token now surfaces an
+        inline error on the form instead of being silently saved (with the
+        operator finding out 30-60s later from the dashboard's auth_error
+        badge). On success, the operator advances to setup step 2 unless
+        a location is already configured (the reconfigure path), in which
+        case we skip directly to the dashboard.
+        """
         org_id = (request.form.get("org_id") or "").strip()
         api_token = (request.form.get("api_token") or "").strip()
         if not org_id or not api_token:
@@ -495,34 +617,102 @@ def create_app(data_dir=None):
                 ),
                 400,
             )
+
+        base_url = os.environ.get("EE_BASE_URL", EE_BASE_URL_DEFAULT)
+        ok, error, _ = verify_credentials(base_url, api_token)
+        if not ok:
+            return (
+                render_template(
+                    "setup.html",
+                    org_id=org_id,
+                    error=error,
+                    configured=read_config(data_dir) is not None,
+                ),
+                400,
+            )
+
         write_config(data_dir, org_id, api_token)
+        # Reconfigure path: location was already set, jump to dashboard.
+        # First-time setup: continue to step 2 (location).
+        if is_setup_complete(data_dir):
+            return redirect(url_for("index"))
+        return redirect(url_for("setup_location"))
+
+    @app.route("/setup/location", methods=["GET"])
+    def setup_location():
+        """Setup step 2: required location entry.
+
+        Bounces back to step 1 if credentials are missing so operators
+        always complete the wizard in order. Rendered with empty fields
+        — this is first-time entry, not a "change my location" form.
+        """
+        if read_config(data_dir) is None:
+            return redirect(url_for("setup"))
+        return render_template(
+            "setup_location.html",
+            fixed_lat="",
+            fixed_lon="",
+            error=None,
+        )
+
+    @app.route("/setup/location", methods=["POST"])
+    def save_setup_location():
+        """Setup step 2 POST. Both lat and lon required and range-checked.
+
+        No 'clear' path: location is required for first-time setup. The
+        clear path lives on the post-setup page (/settings/location)
+        where it can revert to GPS-driven mode for operators with a
+        working GPS dongle. On success the worker is asked to restart
+        so the new GpsClient picks up the coordinates on next boot.
+        """
+        if read_config(data_dir) is None:
+            return redirect(url_for("setup"))
+
+        raw_lat = (request.form.get("fixed_lat") or "").strip()
+        raw_lon = (request.form.get("fixed_lon") or "").strip()
+
+        ok, err, lat, lon = _parse_coords(raw_lat, raw_lon, allow_blank=False)
+        if not ok:
+            return (
+                render_template(
+                    "setup_location.html",
+                    fixed_lat=raw_lat,
+                    fixed_lon=raw_lon,
+                    error=err,
+                ),
+                400,
+            )
+
+        write_advanced_config(data_dir, lat, lon)
+        _touch_restart_sentinel(data_dir)
         return redirect(url_for("index"))
 
-    @app.route("/advanced", methods=["GET"])
-    def advanced():
-        """Show the fixed-location override form."""
+    @app.route("/settings/location", methods=["GET"])
+    def settings_location():
+        """Post-setup location settings.
+
+        Operator can change or clear the saved location. Clearing reverts
+        to GPS-driven mode (no-op if there's no working GPS dongle, but
+        that's the operator's call). Distinguished from /setup/location
+        by the presence of credentials AND a saved location at entry.
+        """
         lat, lon = read_advanced_config(data_dir)
         return render_template(
-            "advanced.html",
+            "settings_location.html",
             fixed_lat="" if lat is None else lat,
             fixed_lon="" if lon is None else lon,
             error=None,
             saved=False,
         )
 
-    @app.route("/advanced", methods=["POST"])
-    def save_advanced():
-        """Validate and persist the fixed-location override.
+    @app.route("/settings/location", methods=["POST"])
+    def save_settings_location():
+        """Post-setup location save. Both fields empty -> clear and revert
+        to GPS-driven mode. Either both must be non-empty floats in range,
+        or both must be empty. One alone is a validation error.
 
-        Both fields empty -> clears the override. Either both must be
-        non-empty floats in range, or both must be empty. One alone is
-        treated as a validation error (and re-renders the form) so an
-        operator who started filling the form out can't accidentally
-        save a half-configured override.
-
-        On a successful save, the worker is asked to restart so the new
-        GpsClient picks up the change on next boot (gps mode is set at
-        worker boot; restart is the cleanest way to apply it).
+        On success, the worker is asked to restart so the new GpsClient
+        picks up the change on next boot.
         """
         raw_lat = (request.form.get("fixed_lat") or "").strip()
         raw_lon = (request.form.get("fixed_lon") or "").strip()
@@ -531,58 +721,21 @@ def create_app(data_dir=None):
             write_advanced_config(data_dir, None, None)
             _touch_restart_sentinel(data_dir)
             return render_template(
-                "advanced.html",
+                "settings_location.html",
                 fixed_lat="",
                 fixed_lon="",
                 error=None,
                 saved=True,
             )
 
-        if not raw_lat or not raw_lon:
+        ok, err, lat, lon = _parse_coords(raw_lat, raw_lon, allow_blank=False)
+        if not ok:
             return (
                 render_template(
-                    "advanced.html",
+                    "settings_location.html",
                     fixed_lat=raw_lat,
                     fixed_lon=raw_lon,
-                    error="Both latitude and longitude are required, or clear both to disable.",
-                    saved=False,
-                ),
-                400,
-            )
-
-        try:
-            lat = float(raw_lat)
-            lon = float(raw_lon)
-        except ValueError:
-            return (
-                render_template(
-                    "advanced.html",
-                    fixed_lat=raw_lat,
-                    fixed_lon=raw_lon,
-                    error="Latitude and longitude must be numeric (e.g. 40.712082, -74.040900).",
-                    saved=False,
-                ),
-                400,
-            )
-
-        if not -90.0 <= lat <= 90.0:
-            return (
-                render_template(
-                    "advanced.html",
-                    fixed_lat=raw_lat,
-                    fixed_lon=raw_lon,
-                    error="Latitude must be between -90 and 90.",
-                    saved=False,
-                ),
-                400,
-            )
-        if not -180.0 <= lon <= 180.0:
-            return (
-                render_template(
-                    "advanced.html",
-                    fixed_lat=raw_lat,
-                    fixed_lon=raw_lon,
-                    error="Longitude must be between -180 and 180.",
+                    error=err,
                     saved=False,
                 ),
                 400,
@@ -591,14 +744,54 @@ def create_app(data_dir=None):
         write_advanced_config(data_dir, lat, lon)
         _touch_restart_sentinel(data_dir)
         return render_template(
-            "advanced.html",
+            "settings_location.html",
             fixed_lat=lat,
             fixed_lon=lon,
             error=None,
             saved=True,
         )
 
+    @app.route("/advanced", methods=["GET", "POST"])
+    def advanced_redirect():
+        """Old /advanced route. 308 preserves the request method (POST)
+        so a bookmarked or in-flight write still lands on the renamed
+        page. Pre-0.6.0 operators who never updated their bookmarks
+        keep working."""
+        return redirect(url_for("settings_location"), code=308)
+
     return app
+
+
+def _parse_coords(raw_lat, raw_lon, *, allow_blank):
+    """Shared validation for the two location-form handlers.
+
+    Returns ``(ok, error_message, lat, lon)``:
+    * ``(True, None, float, float)`` — valid coordinates.
+    * ``(False, error_message, None, None)`` — validation failed.
+
+    ``allow_blank``: when True (settings page), both fields blank is a
+    valid "clear" — but callers handle that path BEFORE calling here.
+    When False (setup step 2), blanks are an error. Either way, one
+    blank and one non-blank is always an error.
+    """
+    if not raw_lat or not raw_lon:
+        if allow_blank:
+            err = "Both latitude and longitude are required, or clear both to disable."
+        else:
+            err = "Both latitude and longitude are required."
+        return False, err, None, None
+    try:
+        lat = float(raw_lat)
+        lon = float(raw_lon)
+    except ValueError:
+        return False, (
+            "Latitude and longitude must be numeric (e.g. 40.712082, -74.040900)."
+        ), None, None
+    if not -90.0 <= lat <= 90.0:
+        return False, "Latitude must be between -90 and 90.", None, None
+    if not -180.0 <= lon <= 180.0:
+        return False, "Longitude must be between -180 and 180.", None, None
+    return True, None, lat, lon
 
 
 def _touch_restart_sentinel(data_dir):

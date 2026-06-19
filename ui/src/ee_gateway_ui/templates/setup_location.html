@@ -1,0 +1,56 @@
+{# EE Gateway UI setup step 2: required location entry. GPL-3.0-only; see LICENSE at the repository root. #}
+{% extends "base.html" %}
+{% block title %}Set your location, EE Gateway{% endblock %}
+{% block topbar_actions %}<span class="route-chip">/setup/location</span>{% endblock %}
+
+{% block content %}
+<section class="card reveal" data-reveal="1">
+  <div class="card-head">
+    <div class="card-head-text">
+      <span class="eyebrow">Step 2 of 2</span>
+      <h1 class="card-title">Where is this gateway?</h1>
+      <p class="card-sub">
+        Connected to Encrypted Energy. Tell us where this gateway is so
+        every packet it forwards carries a location. Most operators only
+        do this once — change it later under Location settings.
+      </p>
+    </div>
+  </div>
+
+  {% if error %}
+  <p class="alert" role="alert">{{ error }}</p>
+  {% endif %}
+
+  <form class="form" method="post" action="{{ url_for('save_setup_location') }}" autocomplete="off">
+    <label class="field">
+      <span class="field-label">Latitude</span>
+      <input class="field-input" type="text" name="fixed_lat" value="{{ fixed_lat }}"
+             placeholder="40.712082" inputmode="decimal" spellcheck="false"
+             autocomplete="off" required>
+      <span class="field-hint">
+        Decimal degrees, -90 to 90. Four decimal places gives ~11m
+        accuracy, three gives ~110m — either is more than enough for
+        the proximity matching Hubble does.
+      </span>
+    </label>
+
+    <label class="field">
+      <span class="field-label">Longitude</span>
+      <input class="field-input" type="text" name="fixed_lon" value="{{ fixed_lon }}"
+             placeholder="-74.040900" inputmode="decimal" spellcheck="false"
+             autocomplete="off" required>
+      <span class="field-hint">Decimal degrees, -180 to 180.</span>
+    </label>
+
+    <p class="field-hint" style="margin-top: 4px;">
+      Don't know your coordinates? Open Google Maps, right-click the spot
+      where this gateway lives, and copy the lat/lon that appears at the
+      top of the menu.
+    </p>
+
+    <div class="form-actions">
+      <button class="btn btn-primary btn-block" type="submit">Save location and start gateway</button>
+    </div>
+  </form>
+</section>
+{% endblock %}
