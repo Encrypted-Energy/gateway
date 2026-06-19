@@ -10,9 +10,9 @@
       <span class="eyebrow">Step 2 of 2</span>
       <h1 class="card-title">Where is this gateway?</h1>
       <p class="card-sub">
-        Connected to Encrypted Energy. Tell us where this gateway is so
-        every packet it forwards carries a location. Most operators only
-        do this once — change it later under Location settings.
+        Connected. Tell us where this gateway is so every forwarded
+        packet carries a location. You can change it later under
+        Location settings.
       </p>
     </div>
   </div>
@@ -24,29 +24,28 @@
   <form class="form" method="post" action="{{ url_for('save_setup_location') }}" autocomplete="off">
     <label class="field">
       <span class="field-label">Latitude</span>
-      <input class="field-input" type="text" name="fixed_lat" value="{{ fixed_lat or '47.61430270391947' }}"
-             placeholder="47.61430270391947" inputmode="decimal" spellcheck="false"
+      <input class="field-input" type="text" name="fixed_lat" value="{{ fixed_lat or '90.0' }}"
+             placeholder="90.0" inputmode="decimal" spellcheck="false"
              autocomplete="off" required>
       <span class="field-hint">
-        Decimal degrees, -90 to 90. Four decimal places gives ~11m
-        accuracy, three gives ~110m — either is more than enough for
-        the proximity matching Hubble does.
+        Decimal degrees, -90 to 90. Four decimal places gives about
+        11m of accuracy, three gives 110m. Either is plenty for the
+        proximity matching Hubble does.
       </span>
     </label>
 
     <label class="field">
       <span class="field-label">Longitude</span>
-      <input class="field-input" type="text" name="fixed_lon" value="{{ fixed_lon or '-122.3191470665486' }}"
-             placeholder="-122.3191470665486" inputmode="decimal" spellcheck="false"
+      <input class="field-input" type="text" name="fixed_lon" value="{{ fixed_lon or '0.0' }}"
+             placeholder="0.0" inputmode="decimal" spellcheck="false"
              autocomplete="off" required>
       <span class="field-hint">Decimal degrees, -180 to 180.</span>
     </label>
 
     <p class="field-hint" style="margin-top: 4px;">
-      Pre-filled to Hubble Network's HQ in Seattle as a sensible default.
-      Replace with your gateway's own coordinates — open Google Maps,
-      right-click the spot, and copy the lat/lon that appears at the
-      top of the menu.
+      Pre-filled to the North Pole (90, 0) so it's obvious you haven't
+      set it yet. To find your real coordinates, open Google Maps,
+      right-click the spot, and copy the lat/lon at the top of the menu.
     </p>
 
     <div class="form-actions">

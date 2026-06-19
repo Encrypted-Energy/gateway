@@ -63,13 +63,13 @@
      dashboard. #}
   <div class="kpis">
     {% for label, sublabel, value, accent in [
-        ('Devices in range', 'heard in last 24h',         counts.devices, true),
-        ('Packets',          'captured this gateway',     counts.total,    false),
-        ('Ingested',         'forwarded to Hubble',       counts.ingested, false),
-        ('Pending',          'waiting to forward',        counts.pending,  false)] %}
+        ('Devices in range', 'heard in last 24h',        counts.devices,  true),
+        ('Packets',          'captured in last 30 days', counts.total,    false),
+        ('Ingested',         'forwarded to Hubble',      counts.ingested, false),
+        ('Pending',          'waiting to forward',       counts.pending,  false)] %}
     <div class="kpi {% if accent %}kpi-accent{% endif %} reveal" data-reveal="{{ loop.index }}">
       <span class="kpi-label">{{ label }}</span>
-      <span class="kpi-value">{{ value if value is not none else '-' }}</span>
+      <span class="kpi-value">{{ value | thousands }}</span>
       <span class="kpi-sublabel">{{ sublabel }}</span>
     </div>
     {% endfor %}

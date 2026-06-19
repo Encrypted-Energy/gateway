@@ -507,6 +507,18 @@ def create_app(data_dir=None):
     def inject_version():
         return {"gateway_version": gateway_version}
 
+    @app.template_filter("thousands")
+    def thousands_filter(value):
+        """Render a packet count with thousand-separator commas, or ``-`` for
+        None. The dashboard KPIs read better at glance with separators once
+        counts cross 1000."""
+        if value is None:
+            return "-"
+        try:
+            return f"{int(value):,}"
+        except (TypeError, ValueError):
+            return str(value)
+
     @app.route("/healthz")
     def healthz():
         """Liveness probe for the container / app proxy."""
