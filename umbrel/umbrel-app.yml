@@ -12,40 +12,38 @@
 manifestVersion: 1
 id: encryptedenergy-ee-gateway
 name: EE Gateway
-tagline: Self-hosted Hubble Network Bluetooth gateway
+tagline: Self-hosted Bluetooth gateway for open BLE networks
 icon: https://raw.githubusercontent.com/Encrypted-Energy/umbrel-community-app-store/main/encryptedenergy-ee-gateway/icon.svg
 category: Networking
-version: "0.10.2"
+version: "0.10.3"
 releaseNotes: >-
-  Polish pass on the setup wizard and dashboard. Setup step 2
-  pre-fills the North Pole (90, 0) as an obvious placeholder so
-  any unedited gateway is easy to spot. Copy across setup,
-  Location settings, and the field hints rewritten to sound
-  conversational and to drop em dashes. Dashboard KPIs now
-  render with thousand-separator commas, and the Packets sublabel
-  clarifies the 30-day retention window ("captured in last 30
-  days"). UI image 0.6.2; worker stays at 0.7.4; manifest moves
-  to 0.10.2.
+  Listing copy rewrite. EE Gateway is positioned as a generic
+  self-hosted gateway for open BLE networks, with Hubble Network
+  named as the first supported upstream rather than the whole
+  product. No code or image changes; UI stays at 0.6.2 and worker
+  stays at 0.7.4. Manifest moves to 0.10.3.
 port: 8080
 description: >-
-  EE Gateway turns your Umbrel into a self-hosted Hubble Network Bluetooth
-  gateway.
+  EE Gateway turns your Umbrel into a self-hosted Bluetooth gateway for
+  open BLE networks.
 
 
-  It scans with your device's Bluetooth radio for nearby Hubble Network devices
-  and forwards their packets to the Hubble cloud, extending coverage for the
-  global Hubble Network from hardware you already own.
+  It scans with your device's Bluetooth radio for nearby BLE devices from
+  supported networks and forwards their packets to the right upstream cloud,
+  extending ground coverage from hardware you already own. Hubble Network
+  is supported today; more partner networks will be added as they come
+  online.
 
 
   Two containers do the work: a worker that scans over Bluetooth and ingests
-  packets to Hubble, and a small web dashboard for first-time setup and live
-  status. Enter your Hubble organization ID and API token once in the setup
+  packets upstream, and a small web dashboard for first-time setup and live
+  status. Enter your network organization ID and API token once in the setup
   wizard, and the gateway runs on its own.
 
 
   EE Gateway is free and open-source software (GPL-3.0-only), built by
-  encryptedenergy.com. It is an independent community project and is not an
-  official Hubble Network product.
+  encryptedenergy.com. It is an independent community project and is not
+  affiliated with any specific BLE network.
 developer: encryptedenergy.com
 website: https://encryptedenergy.com
 submitter: John Marbach
