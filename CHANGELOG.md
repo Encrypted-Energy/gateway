@@ -6,6 +6,16 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- Gateway 0.10.1 (UI 0.6.1): polish on the location pages added in
+  0.10.0. Setup step 2 now pre-fills Hubble Network's Seattle HQ
+  (47.61430270391947, -122.3191470665486) as a sensible default
+  value (operators can save as-is or replace with their real
+  coordinates). Copy on the post-setup `/settings/location` page
+  rewritten to drop the awkward "where this gateway lives"
+  phrasing and clarify the GPS-dongle fallback ("To switch over
+  to a connected GPS dongle instead, clear both fields"). Field
+  placeholders on both pages updated to Hubble HQ coords. Worker
+  unchanged.
 - Gateway 0.10.0 (UI 0.6.0): two-step setup with real credential
   verification. Setup is now (1) credentials and (2) location, in
   that order. Step 1 calls ee-web's new `/api/v1/gateways/verify`

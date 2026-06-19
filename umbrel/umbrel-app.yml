@@ -15,19 +15,16 @@ name: EE Gateway
 tagline: Self-hosted Hubble Network Bluetooth gateway
 icon: https://raw.githubusercontent.com/Encrypted-Energy/umbrel-community-app-store/main/encryptedenergy-ee-gateway/icon.svg
 category: Networking
-version: "0.10.0"
+version: "0.10.1"
 releaseNotes: >-
-  Two-step setup with real credential verification. Setup now has
-  two required steps: (1) paste org_id + API token, which is
-  verified inline against encryptedenergy.com (bad tokens surface
-  an error immediately instead of silently saving and failing
-  ~30s later on the dashboard); (2) enter the gateway's location
-  in decimal degrees. Location is now a required setup field —
-  GPS dongles are repositioned as optional advanced hardware for
-  mobile or outdoor-mounted gateways, since most home Umbrels
-  can't see enough sky for a reliable fix. /advanced renamed to
-  /settings/location (old URL still works as a redirect). UI image
-  0.6.0; worker stays at 0.7.4; manifest moves to 0.10.0.
+  Polish on the location pages added in 0.10.0. Setup step 2 now
+  pre-fills Hubble Network's Seattle HQ as a sensible default so
+  the form is submittable as-is for operators who want to start
+  the gateway before nailing down their exact coordinates. Copy
+  on the Location settings page rewritten to drop the awkward
+  "where this gateway lives" phrasing and clarify the GPS-dongle
+  fallback. UI image 0.6.1; worker stays at 0.7.4; manifest
+  moves to 0.10.1.
 port: 8080
 description: >-
   EE Gateway turns your Umbrel into a self-hosted Hubble Network Bluetooth
