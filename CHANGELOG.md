@@ -6,6 +6,20 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- Gateway 0.10.0 (UI 0.6.0): two-step setup with real credential
+  verification. Setup is now (1) credentials and (2) location, in
+  that order. Step 1 calls ee-web's new `/api/v1/gateways/verify`
+  endpoint synchronously and surfaces bad tokens inline instead of
+  silently saving and failing ~30s later on the dashboard's
+  auth_error badge. Step 2 is a required lat/lon entry — operators
+  can no longer reach the dashboard with no location set (which
+  caused the worker to silently drop every packet on the "no GPS
+  fix" path). The `/advanced` route is renamed to
+  `/settings/location` (old URL preserved as a 308 redirect for
+  any operator with a bookmark). Dashboard's "Location override"
+  pill softened to "Location" now that operator-declared location
+  is the primary path, not an override on top of GPS. Worker
+  unchanged at 0.7.4.
 - Gateway 0.9.1 (UI 0.5.1): dashboard readability pass. KPI tiles now
   carry one-line subtitles so each number reads as meaning instead of
   code: "Devices in range — heard in last 24h", "Packets — captured

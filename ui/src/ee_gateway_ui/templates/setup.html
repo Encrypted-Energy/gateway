@@ -7,12 +7,12 @@
 <section class="card reveal" data-reveal="1">
   <div class="card-head">
     <div class="card-head-text">
-      <span class="eyebrow">{% if configured %}Reconfigure{% else %}Step 1 of 1{% endif %}</span>
+      <span class="eyebrow">{% if configured %}Reconfigure{% else %}Step 1 of 2{% endif %}</span>
       <h1 class="card-title">Connect to Encrypted Energy</h1>
       <p class="card-sub">
         Paste the organization ID and API token from your gateway page on
-        encryptedenergy.com. EE forwards your packets to the Hubble Network
-        on your behalf.
+        encryptedenergy.com. We'll verify the token instantly, then ask
+        for your gateway's location.
       </p>
     </div>
   </div>
@@ -44,7 +44,7 @@
     </label>
 
     <div class="form-actions">
-      <button class="btn btn-primary btn-block" type="submit">Save and start gateway</button>
+      <button class="btn btn-primary btn-block" type="submit">Verify and continue</button>
       {% if configured %}
       <a class="btn btn-ghost" href="{{ url_for('index') }}">Cancel</a>
       {% endif %}
