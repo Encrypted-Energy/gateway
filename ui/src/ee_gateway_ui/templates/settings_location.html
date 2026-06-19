@@ -10,10 +10,10 @@
       <span class="eyebrow">Settings</span>
       <h1 class="card-title">Gateway location</h1>
       <p class="card-sub">
-        Update where this gateway lives. The worker stamps every forwarded
-        packet with this coordinate. Leave both fields blank to clear the
-        saved location and revert to live GPS (only useful with a working
-        GPS dongle attached).
+        Update this gateway's coordinates. The worker stamps every
+        forwarded packet with this location. To switch over to a
+        connected GPS dongle instead, clear both fields (advanced —
+        most gateways don't have one).
       </p>
     </div>
   </div>
@@ -32,7 +32,7 @@
     <label class="field">
       <span class="field-label">Latitude</span>
       <input class="field-input" type="text" name="fixed_lat" value="{{ fixed_lat }}"
-             placeholder="40.712082" inputmode="decimal" spellcheck="false"
+             placeholder="47.61430270391947" inputmode="decimal" spellcheck="false"
              autocomplete="off">
       <span class="field-hint">Decimal degrees, -90 to 90.</span>
     </label>
@@ -40,7 +40,7 @@
     <label class="field">
       <span class="field-label">Longitude</span>
       <input class="field-input" type="text" name="fixed_lon" value="{{ fixed_lon }}"
-             placeholder="-74.040900" inputmode="decimal" spellcheck="false"
+             placeholder="-122.3191470665486" inputmode="decimal" spellcheck="false"
              autocomplete="off">
       <span class="field-hint">Decimal degrees, -180 to 180.</span>
     </label>
