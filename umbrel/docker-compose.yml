@@ -34,7 +34,7 @@ services:
   # extra download, and it is the only place root is used. This is NOT privileged
   # mode; the app containers themselves stay non-root.
   init_perms:
-    image: encryptedenergy/ee-gateway-worker:0.7.4
+    image: encryptedenergy/ee-gateway-worker:0.7.5
     user: "0:0"
     entrypoint: ["sh", "-c", "chown -R 1000:1000 /data"]
     restart: "no"
@@ -59,7 +59,7 @@ services:
       EE_UI_PORT: 8080
       # Brand-line version shown in the dashboard header. Bump this when
       # the app manifest version bumps so the operator sees what's running.
-      EE_GATEWAY_VERSION: "0.10.3"
+      EE_GATEWAY_VERSION: "0.10.4"
 
   # BLE scan + GPS-stamped cloud ingest worker. It reaches the host's
   # Bluetooth radio through bluetoothd over the D-Bus system bus, talks to
@@ -68,7 +68,7 @@ services:
   # process runs as uid 1000; gpsd starts as root only to open the
   # serial device, then drops to user nobody.
   worker:
-    image: encryptedenergy/ee-gateway-worker:0.7.4
+    image: encryptedenergy/ee-gateway-worker:0.7.5
     init: true
     # Wait for the one-time ownership fix, then self-heal on any non-zero exit
     # (a transient radio or D-Bus error, or a start that raced init_perms). In

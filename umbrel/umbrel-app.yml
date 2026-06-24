@@ -15,13 +15,14 @@ name: EE Gateway
 tagline: Self-hosted Bluetooth gateway for open BLE networks
 icon: https://raw.githubusercontent.com/Encrypted-Energy/umbrel-community-app-store/main/encryptedenergy-ee-gateway/icon.svg
 category: Networking
-version: "0.10.3"
+version: "0.10.4"
 releaseNotes: >-
-  Listing copy rewrite. EE Gateway is positioned as a generic
-  self-hosted gateway for open BLE networks, with Hubble Network
-  named as the first supported upstream rather than the whole
-  product. No code or image changes; UI stays at 0.6.2 and worker
-  stays at 0.7.4. Manifest moves to 0.10.3.
+  Security hardening. Worker bumped to 0.7.5: the bundled gpsd no
+  longer binds 0.0.0.0:2947 (defaults to 127.0.0.1:2947 loopback
+  only). Because the worker runs with network_mode: host for the
+  Bluetooth radio, this removes a LAN-facing GPS listener that was
+  unintentionally exposed. The worker still reads gpsd over
+  127.0.0.1 internally; no functional change. UI stays at 0.6.2.
 port: 8080
 description: >-
   EE Gateway turns your Umbrel into a self-hosted Bluetooth gateway for

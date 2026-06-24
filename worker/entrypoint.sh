@@ -47,11 +47,16 @@ fi
 if [ -n "$DEVICES" ]; then
   # -n: start reading the device immediately, do not wait for the first
   #     client connect. Makes a fix available to our first heartbeat.
-  # -G: allow connections from any address. We only bind 127.0.0.1 (the
-  #     default), so this just means "let any process inside this
-  #     container reach gpsd" — which is what we want.
+  #
+  # Note: we intentionally do NOT pass -G. gpsd's default bind is
+  # 127.0.0.1:2947 (loopback only). Because the worker container runs
+  # with network_mode: host, that loopback is the host's loopback —
+  # which is exactly what the Python worker reads from (see gps.py
+  # GPSD_HOST). Adding -G would make gpsd bind 0.0.0.0:2947 and expose
+  # the GPS feed to every device on the operator's LAN, which has no
+  # legitimate consumer.
   # shellcheck disable=SC2086
-  if gpsd -n -G $DEVICES; then
+  if gpsd -n $DEVICES; then
     echo "[entrypoint] gpsd started on: $DEVICES"
   else
     echo "[entrypoint] gpsd failed to start on: $DEVICES; worker will report dongle_missing"
