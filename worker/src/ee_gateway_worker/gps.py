@@ -104,13 +104,29 @@ class GpsClient:
         # Fixed-location override. Both coords must be supplied; one alone
         # is invalid and is silently ignored (we log a warning when wiring
         # this up in main.py so the operator sees the misconfig).
+        #
+        # (0.0, 0.0) is treated as a misconfig, not a real coordinate:
+        # it's off the coast of Africa in the Gulf of Guinea, where a
+        # real gateway is essentially never anchored. Historically this
+        # value has landed in config.json via UI edge cases (empty-form
+        # submits, autofill) and caused every packet to be rejected
+        # upstream with an opaque 422. Reject it here as defense in depth
+        # against the UI-side validator being bypassed. Falls back to
+        # gpsd-driven mode.
         self._fixed: Optional[GpsFix] = None
         if fixed_lat is not None and fixed_lon is not None:
-            self._fixed = GpsFix(lat=float(fixed_lat), lon=float(fixed_lon), at=time.time())
-            log.warning(
-                "GpsClient in FIXED-LOCATION mode at (%s, %s); gpsd reports will be ignored",
-                fixed_lat, fixed_lon,
-            )
+            if float(fixed_lat) == 0.0 and float(fixed_lon) == 0.0:
+                log.warning(
+                    "GpsClient: fixed-location override is (0.0, 0.0), "
+                    "which is treated as unset (real gateways are never "
+                    "on the equator off Africa). Falling back to gpsd."
+                )
+            else:
+                self._fixed = GpsFix(lat=float(fixed_lat), lon=float(fixed_lon), at=time.time())
+                log.warning(
+                    "GpsClient in FIXED-LOCATION mode at (%s, %s); gpsd reports will be ignored",
+                    fixed_lat, fixed_lon,
+                )
 
     def start(self) -> None:
         self._thread.start()

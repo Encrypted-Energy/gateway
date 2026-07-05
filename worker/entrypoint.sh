@@ -44,6 +44,21 @@ else
   DEVICES="${DEVICES# }"
 fi
 
+# Optional baud rate hint for gpsd. Some GPS receivers (e.g. u-blox M10
+# EVK-M102) default to 38400 baud, which is not gpsd's first auto-probe
+# rate — the mismatch causes gpsd to sit on the port silently, never
+# emitting NMEA, and eventually drop the device. Setting EE_GPS_BAUD
+# in the compose env tells gpsd exactly what baud to use, skipping
+# autobauding entirely.
+#
+# Leave unset for standard consumer dongles (BU-353N at 4800, VK-172 at
+# 9600, etc.) — gpsd's auto-probe handles those correctly.
+BAUD_HINT=""
+if [ -n "$EE_GPS_BAUD" ]; then
+  BAUD_HINT="-s $EE_GPS_BAUD"
+  echo "[entrypoint] gpsd baud hint: $EE_GPS_BAUD"
+fi
+
 if [ -n "$DEVICES" ]; then
   # -n: start reading the device immediately, do not wait for the first
   #     client connect. Makes a fix available to our first heartbeat.
@@ -56,7 +71,7 @@ if [ -n "$DEVICES" ]; then
   # the GPS feed to every device on the operator's LAN, which has no
   # legitimate consumer.
   # shellcheck disable=SC2086
-  if gpsd -n $DEVICES; then
+  if gpsd -n $BAUD_HINT $DEVICES; then
     echo "[entrypoint] gpsd started on: $DEVICES"
   else
     echo "[entrypoint] gpsd failed to start on: $DEVICES; worker will report dongle_missing"

@@ -34,7 +34,7 @@ services:
   # extra download, and it is the only place root is used. This is NOT privileged
   # mode; the app containers themselves stay non-root.
   init_perms:
-    image: encryptedenergy/ee-gateway-worker:0.7.5
+    image: encryptedenergy/ee-gateway-worker:0.7.6
     user: "0:0"
     entrypoint: ["sh", "-c", "chown -R 1000:1000 /data"]
     restart: "no"
@@ -45,7 +45,7 @@ services:
   # no added capabilities, no Bluetooth access. Runs as uid 1000 (set in the
   # image). init: true so SIGTERM reaches Flask for a clean shutdown.
   ui:
-    image: encryptedenergy/ee-gateway-ui:0.6.2
+    image: encryptedenergy/ee-gateway-ui:0.6.3
     init: true
     depends_on:
       init_perms:
@@ -59,7 +59,7 @@ services:
       EE_UI_PORT: 8080
       # Brand-line version shown in the dashboard header. Bump this when
       # the app manifest version bumps so the operator sees what's running.
-      EE_GATEWAY_VERSION: "0.10.4"
+      EE_GATEWAY_VERSION: "0.10.5"
 
   # BLE scan + GPS-stamped cloud ingest worker. It reaches the host's
   # Bluetooth radio through bluetoothd over the D-Bus system bus, talks to
@@ -68,7 +68,7 @@ services:
   # process runs as uid 1000; gpsd starts as root only to open the
   # serial device, then drops to user nobody.
   worker:
-    image: encryptedenergy/ee-gateway-worker:0.7.5
+    image: encryptedenergy/ee-gateway-worker:0.7.6
     init: true
     # Wait for the one-time ownership fix, then self-heal on any non-zero exit
     # (a transient radio or D-Bus error, or a start that raced init_perms). In
@@ -131,3 +131,9 @@ services:
       # and starts gpsd on whatever's present. Set EE_GPS_DEVICE here to
       # force a specific path (e.g. EE_GPS_DEVICE: /dev/serial/by-id/...)
       # or to keep the 0.7.x behavior for a non-standard install.
+      #
+      # EE_GPS_BAUD (0.7.6+, optional): baud rate hint for gpsd. Unset
+      # by default so gpsd auto-probes (works for BU-353N at 4800,
+      # VK-172 at 9600). Set to 38400 for u-blox M10 chips (EVK-M102
+      # etc.) where auto-probe can miss the default rate and gpsd sits
+      # silently on the port.

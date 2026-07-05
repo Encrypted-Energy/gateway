@@ -23,7 +23,13 @@ LABEL org.opencontainers.image.licenses="GPL-3.0-only"
 # EE_GPS_DEVICE: serial device the entrypoint passes to gpsd. Defaults to
 #   /dev/ttyUSB0 (PL2303-class USB GPS like the GlobalSat BU-353-S4);
 #   override via the compose `environment:` if your dongle is on
-#   /dev/ttyACM0 (u-blox NEO USB).
+#   /dev/ttyACM0 (u-blox NEO USB) or an unusual channel of a multi-port
+#   FTDI bridge (u-blox EVK-M102 GNSS UART sits on channel C = ttyUSB2).
+# EE_GPS_BAUD: optional baud rate hint for gpsd. Unset by default so
+#   gpsd auto-probes (works for BU-353N at 4800, VK-172 at 9600, etc.).
+#   Set to 38400 for u-blox M10 chips (the M10 default) — gpsd's
+#   auto-probe order can miss 38400 and sit silently on the port
+#   without ever emitting NMEA.
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     EE_DATA_DIR=/data \
