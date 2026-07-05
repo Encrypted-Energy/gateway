@@ -803,6 +803,17 @@ def _parse_coords(raw_lat, raw_lon, *, allow_blank):
         return False, "Latitude must be between -90 and 90.", None, None
     if not -180.0 <= lon <= 180.0:
         return False, "Longitude must be between -180 and 180.", None, None
+    # (0.0, 0.0) is technically in-range but is essentially always an
+    # unset override — the point is off the coast of Africa in the Gulf
+    # of Guinea, where a real gateway never is. Every packet stamped with
+    # (0, 0) gets rejected by the upstream network with an opaque 422, so
+    # catch this here with a message the operator can act on.
+    if lat == 0.0 and lon == 0.0:
+        return False, (
+            "Latitude and longitude cannot both be zero. Enter your actual "
+            "gateway coordinates (e.g. 40.712082, -74.040900), or clear both "
+            "fields to fall back to GPS."
+        ), None, None
     return True, None, lat, lon
 
 

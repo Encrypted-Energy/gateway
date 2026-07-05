@@ -581,6 +581,19 @@ def test_settings_location_post_lon_out_of_range_is_error(client, tmp_path):
     assert b"longitude" in response.data.lower()
 
 
+def test_settings_location_post_zero_zero_is_error(client, tmp_path):
+    """(0.0, 0.0) is off the coast of Africa. A real gateway is never
+    there, but it's the classic 'unset override' tell that used to land
+    silently in config.json and cause every packet to be rejected
+    upstream with an opaque 422. Reject it at the parser level with a
+    specific error the operator can act on."""
+    response = client.post(
+        "/settings/location", data={"fixed_lat": "0.0", "fixed_lon": "0.0"}
+    )
+    assert response.status_code == 400
+    assert b"cannot both be zero" in response.data.lower()
+
+
 # --------------------------------------------------------------------------
 # /advanced backward-compat redirect
 # --------------------------------------------------------------------------
