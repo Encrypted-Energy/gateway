@@ -24,10 +24,12 @@ This module exposes one function (:func:`ingest_packet`) that the
 
 Failure modes returned to the caller:
 
-* :class:`IngestTransient`  the request never reached EE, or EE returned 5xx.
-  The caller should leave the packet pending and retry on the next pass.
-* :class:`IngestTerminal`   EE returned 4xx (bad token, malformed body, etc).
-  The caller should drop the packet to clear it from the queue.
+* :class:`IngestTransient`  the request never reached EE, EE returned 5xx, or
+  EE returned a retryable 4xx (408 timeout, 429 rate limit). The caller should
+  leave the packet pending and retry on the next pass.
+* :class:`IngestTerminal`   EE returned a terminal 4xx (malformed body, genuine
+  Hubble 400/404/422, etc). The caller should drop the packet to clear it.
+* :class:`IngestUnauthorized` EE returned 401 (bad/revoked token).
 * ``None``                  success.
 """
 
@@ -122,6 +124,13 @@ def ingest_packet(
         if exc.code == 401:
             raise IngestUnauthorized(
                 f"EE rejected packet (HTTP 401): token invalid or revoked"
+            ) from exc
+        # 408 (timeout) and 429 (rate limit) are retryable, not terminal.
+        # Dropping them on the floor permanently destroys the packet the next
+        # time EE throttles a busy gateway.
+        if exc.code in (408, 429):
+            raise IngestTransient(
+                f"EE asked us to retry (HTTP {exc.code}): {exc.reason}"
             ) from exc
         if 400 <= exc.code < 500:
             raise IngestTerminal(
