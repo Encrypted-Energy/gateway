@@ -5,7 +5,16 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
-Nothing yet.
+### Changed
+- Worker 0.8.0: batch ingest. The ingest loop now drains up to 500 pending
+  packets and sends them to EE in a single request (was one HTTP call per
+  packet), matching EE's per-request cap. EE forwards the batch to Hubble in
+  one upstream call and dedupes an identical resend, so a retry after a lost
+  response is safe. The whole batch is marked done / kept pending / dropped as
+  a unit via new batch DB helpers (one commit per batch instead of one per
+  packet). Cuts worker→EE request volume, Hubble rate-limit pressure, and
+  SD-card fsyncs by up to 500x. Also folds in the earlier 0.7.x fix that
+  retries 408/429 instead of dropping packets.
 
 ## [0.10.6] - 2026-07-18
 

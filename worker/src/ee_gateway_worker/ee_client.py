@@ -18,17 +18,22 @@ credentials (ee_org_..., ee_live_...) into the setup wizard; the worker
 forwards each packet to ``${EE_BASE_URL}/api/v1/gateways/packets``, and EE
 proxies the packet to Hubble using its master wholesale account.
 
-This module exposes one function (:func:`ingest_packet`) that the
-``ingest_loop`` in ``main.py`` calls per packet. Implemented with
-``urllib.request`` to keep the worker free of new dependencies.
+This module exposes :func:`ingest_packets`, which the ``ingest_loop`` in
+``main.py`` calls with a whole batch of packets (up to EE's per-request
+cap), and :func:`ingest_packet`, a single-packet convenience wrapper. EE
+forwards the batch to Hubble in one upstream call and dedupes resends by a
+content-derived batchId, so re-sending a batch after a lost response is
+safe. Implemented with ``urllib.request`` to keep the worker free of new
+dependencies.
 
-Failure modes returned to the caller:
+Failure modes returned to the caller (identical for a single packet or a
+batch — EE accepts or rejects the whole request as one unit):
 
 * :class:`IngestTransient`  the request never reached EE, EE returned 5xx, or
   EE returned a retryable 4xx (408 timeout, 429 rate limit). The caller should
-  leave the packet pending and retry on the next pass.
+  leave the packets pending and retry on the next pass.
 * :class:`IngestTerminal`   EE returned a terminal 4xx (malformed body, genuine
-  Hubble 400/404/422, etc). The caller should drop the packet to clear it.
+  Hubble 400/404/422, etc). The caller should drop the packets to clear them.
 * :class:`IngestUnauthorized` EE returned 401 (bad/revoked token).
 * ``None``                  success.
 """
@@ -68,6 +73,48 @@ class IngestUnauthorized(IngestTerminal):
     """
 
 
+def wire_packet(
+    *,
+    payload_b64: str,
+    rssi: int | None,
+    timestamp: int | None,
+    latitude: float = 90.0,
+    longitude: float = 0.0,
+    eid: str | None = None,
+) -> dict:
+    """Build the JSON dict for one packet as EE's ingest API expects it.
+
+    Coordinates default to (90, 0) for parity with the Hubble SDK's
+    placeholder. ``eid`` (0.7.3+) is the hex device identifier the worker
+    extracted locally; EE uses it to enforce a per-(org, device, day) bounty
+    cap. Omitted from the body when None so older EE versions that don't
+    expect the field stay compatible (extra fields are accepted regardless).
+    """
+    packet = {
+        "payload_b64": payload_b64,
+        "rssi": rssi,
+        "timestamp": timestamp,
+        "latitude": latitude,
+        "longitude": longitude,
+    }
+    if eid is not None:
+        packet["eid"] = eid
+    return packet
+
+
+def ingest_packets(*, base_url: str, api_token: str, packets: list[dict]) -> None:
+    """POST a batch of packets to EE in one request for forwarding to Hubble.
+
+    ``packets`` is a list of dicts from :func:`wire_packet`. EE accepts or
+    rejects the whole batch as a unit and dedupes an identical resend, so a
+    retry after a lost response does not double-ingest. An empty list is a
+    no-op. Raises the same ``Ingest*`` exceptions as the single-packet path.
+    """
+    if not packets:
+        return None
+    return _post(base_url=base_url, api_token=api_token, body={"packets": packets})
+
+
 def ingest_packet(
     *,
     base_url: str,
@@ -79,31 +126,26 @@ def ingest_packet(
     longitude: float = 0.0,
     eid: str | None = None,
 ) -> None:
-    """POST one packet to EE for forwarding to Hubble.
+    """POST a single packet to EE. Thin wrapper over :func:`ingest_packets`."""
+    return ingest_packets(
+        base_url=base_url,
+        api_token=api_token,
+        packets=[
+            wire_packet(
+                payload_b64=payload_b64,
+                rssi=rssi,
+                timestamp=timestamp,
+                latitude=latitude,
+                longitude=longitude,
+                eid=eid,
+            )
+        ],
+    )
 
-    Coordinates default to (90, 0) for parity with the Hubble SDK's
-    placeholder. They will be replaced by live GPS reads in Gateway 0.5.0.
 
-    ``eid`` (0.7.3+) is the hex device identifier the worker extracted
-    locally. EE uses it to enforce a per-(org, device, day) bounty cap.
-    Omitted from the body when None so backward-compat with EE versions
-    that don't expect the field is preserved (extra fields are silently
-    accepted regardless).
-    """
+def _post(*, base_url: str, api_token: str, body: dict) -> None:
+    """POST a JSON body to EE's packets endpoint and classify the response."""
     url = base_url.rstrip("/") + PACKETS_PATH
-
-    packet = {
-        "payload_b64": payload_b64,
-        "rssi": rssi,
-        "timestamp": timestamp,
-        "latitude": latitude,
-        "longitude": longitude,
-    }
-    if eid is not None:
-        packet["eid"] = eid
-
-    body = {"packets": [packet]}
-
     request = urllib.request.Request(
         url,
         data=json.dumps(body).encode("utf-8"),
@@ -123,10 +165,10 @@ def ingest_packet(
     except urllib.error.HTTPError as exc:
         if exc.code == 401:
             raise IngestUnauthorized(
-                f"EE rejected packet (HTTP 401): token invalid or revoked"
+                f"EE rejected upload (HTTP 401): token invalid or revoked"
             ) from exc
         # 408 (timeout) and 429 (rate limit) are retryable, not terminal.
-        # Dropping them on the floor permanently destroys the packet the next
+        # Dropping them on the floor permanently destroys the packets the next
         # time EE throttles a busy gateway.
         if exc.code in (408, 429):
             raise IngestTransient(
@@ -134,7 +176,7 @@ def ingest_packet(
             ) from exc
         if 400 <= exc.code < 500:
             raise IngestTerminal(
-                f"EE rejected packet (HTTP {exc.code}): {exc.reason}"
+                f"EE rejected upload (HTTP {exc.code}): {exc.reason}"
             ) from exc
         raise IngestTransient(f"EE responded {exc.code}: {exc.reason}") from exc
     except (urllib.error.URLError, TimeoutError, OSError) as exc:

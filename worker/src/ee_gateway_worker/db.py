@@ -127,6 +127,53 @@ def mark_ingest_error(conn: sqlite3.Connection, packet_id: int, error: str) -> N
     conn.commit()
 
 
+def mark_ingested_many(conn: sqlite3.Connection, packet_ids: list[int]) -> None:
+    """Mark a whole batch as successfully ingested in one transaction.
+
+    One UPDATE + one commit instead of N, so a 500-packet batch costs a
+    single fsync rather than 500 on the Pi's SD card.
+    """
+    if not packet_ids:
+        return
+    placeholders = ",".join("?" for _ in packet_ids)
+    conn.execute(
+        f"UPDATE packet_log SET ingested = 1, ingest_error = NULL, ingest_at = ? "
+        f"WHERE id IN ({placeholders})",
+        (time.time(), *packet_ids),
+    )
+    conn.commit()
+
+
+def mark_ingest_error_many(
+    conn: sqlite3.Connection, packet_ids: list[int], error: str
+) -> None:
+    """Record a failed ingest attempt for a whole batch; rows stay pending."""
+    if not packet_ids:
+        return
+    placeholders = ",".join("?" for _ in packet_ids)
+    conn.execute(
+        f"UPDATE packet_log SET ingest_error = ?, ingest_at = ? "
+        f"WHERE id IN ({placeholders})",
+        (error, time.time(), *packet_ids),
+    )
+    conn.commit()
+
+
+def mark_skipped_many(
+    conn: sqlite3.Connection, packet_ids: list[int], reason: str
+) -> None:
+    """Terminally drop a whole batch (``ingested = 1``) without sending it."""
+    if not packet_ids:
+        return
+    placeholders = ",".join("?" for _ in packet_ids)
+    conn.execute(
+        f"UPDATE packet_log SET ingested = 1, ingest_error = ?, ingest_at = ? "
+        f"WHERE id IN ({placeholders})",
+        (reason, time.time(), *packet_ids),
+    )
+    conn.commit()
+
+
 def mark_skipped(conn: sqlite3.Connection, packet_id: int, reason: str) -> None:
     """Mark a packet as terminally done without sending it to the cloud.
 

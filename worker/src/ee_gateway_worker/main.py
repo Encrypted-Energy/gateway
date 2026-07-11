@@ -61,9 +61,13 @@ DB_PATH = os.path.join(DATA_DIR, "packets.db")
 STATE_PATH = os.path.join(DATA_DIR, "state.json")
 
 # How often the ingest loop wakes to look for pending packets, and how many
-# packets it sends per wake.
+# it drains per wake. All packets drained in a wake are sent to EE in ONE
+# request, so this doubles as the batch size. Capped at 500 to match EE's
+# per-request limit (which mirrors Hubble's 500-packet upload cap). The 5s
+# poll is the flush timer: a packet never waits more than one poll before
+# being sent, even when far fewer than 500 have accumulated.
 INGEST_POLL_SECONDS = 5
-INGEST_BATCH = 50
+INGEST_BATCH = 500
 
 # Housekeeping: delete already-ingested packets older than this and reclaim
 # disk. Runs at most once per VACUUM_INTERVAL_SECONDS in the heartbeat loop.
@@ -310,6 +314,10 @@ def ingest_loop() -> None:
             _stop.wait(INGEST_POLL_SECONDS)
             continue
 
+        # Build one batch from the pending queue, dropping unforwardable rows
+        # as we go, then send the whole batch to EE in a single request.
+        batch_ids: list[int] = []
+        batch_packets: list[dict] = []
         for row in db.pending_packets(conn, limit=INGEST_BATCH):
             if _stop.is_set():
                 break
@@ -327,10 +335,10 @@ def ingest_loop() -> None:
                 # the pending queue.
                 db.mark_skipped(conn, row["id"], "no coordinates stored")
                 continue
-            try:
-                ee_client.ingest_packet(
-                    base_url=cfg.ee_base_url,
-                    api_token=cfg.api_token,
+
+            batch_ids.append(row["id"])
+            batch_packets.append(
+                ee_client.wire_packet(
                     payload_b64=packet["payload_b64"],
                     rssi=packet["rssi"],
                     timestamp=packet["timestamp"],
@@ -338,26 +346,36 @@ def ingest_loop() -> None:
                     longitude=packet["longitude"],
                     eid=packet.get("eid"),
                 )
-                db.mark_ingested(conn, row["id"])
+            )
+
+        if batch_packets:
+            try:
+                ee_client.ingest_packets(
+                    base_url=cfg.ee_base_url,
+                    api_token=cfg.api_token,
+                    packets=batch_packets,
+                )
+                db.mark_ingested_many(conn, batch_ids)
                 if _counters is not None:
-                    _counters.add_forwarded()
+                    _counters.add_forwarded(len(batch_ids))
             except ee_client.IngestUnauthorized as exc:
-                # 401 specifically: token invalid or revoked. Drop the
-                # packet and flip the worker into auth_error so the
-                # dashboard surfaces the credential problem.
-                db.mark_skipped(conn, row["id"], str(exc))
-                log.warning("EE rejected packet %d: %s", row["id"], exc)
+                # 401: token invalid or revoked. Drop the batch and flip the
+                # worker into auth_error so the dashboard surfaces the
+                # credential problem.
+                db.mark_skipped_many(conn, batch_ids, str(exc))
+                log.warning("EE rejected batch of %d: %s", len(batch_ids), exc)
                 _write_state(conn, status="auth_error", error=str(exc))
             except ee_client.IngestTerminal as exc:
-                # Other 4xx (e.g. 422 malformed). Drop the packet but do
-                # not change worker state: the credentials are fine, this
-                # is a per-packet data issue we cannot resolve by retrying.
-                db.mark_skipped(conn, row["id"], str(exc))
-                log.warning("EE dropped packet %d: %s", row["id"], exc)
+                # Terminal 4xx (e.g. 422 malformed). Drop the batch but do not
+                # change worker state: credentials are fine, this is a data
+                # issue that retrying won't resolve.
+                db.mark_skipped_many(conn, batch_ids, str(exc))
+                log.warning("EE dropped batch of %d: %s", len(batch_ids), exc)
             except ee_client.IngestTransient as exc:
-                # Network or 5xx. Leave pending; the next pass retries.
-                db.mark_ingest_error(conn, row["id"], str(exc))
-                log.warning("ingest failed for packet %d: %s", row["id"], exc)
+                # Network, 5xx, or retryable 4xx. Leave the batch pending; the
+                # next pass retries it (EE dedupes an identical resend).
+                db.mark_ingest_error_many(conn, batch_ids, str(exc))
+                log.warning("ingest failed for batch of %d: %s", len(batch_ids), exc)
 
         _stop.wait(INGEST_POLL_SECONDS)
 
