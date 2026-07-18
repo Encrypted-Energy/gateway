@@ -6,6 +6,11 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Changed
+- Worker: org_id removed from Config entirely (field, env resolution, and
+  constructor). EE resolves the organization server-side from the bearer
+  token, so the value was collected but never transmitted; 0.10.6 had
+  already made it optional, this finishes the removal. A leftover org_id
+  key in an old config.json is ignored on load.
 - Worker 0.8.0: batch ingest. The ingest loop now drains up to 500 pending
   packets and sends them to EE in a single request (was one HTTP call per
   packet), matching EE's per-request cap. EE forwards the batch to Hubble in
