@@ -891,3 +891,124 @@ def test_version_metadata_in_sync():
     with open(pyproject, "rb") as fh:
         declared = tomllib.load(fh)["project"]["version"]
     assert declared == ee_gateway_ui.__version__
+
+
+# --------------------------------------------------------------------------
+# Pair-split safety (review round 2)
+# --------------------------------------------------------------------------
+# The pair heuristic must never GUESS. Two space- or comma-separated bare
+# integers ("74 2", "51 28", "40, 71") look like degrees-and-minutes or an
+# EU decimal — splitting them into a (lat, lon) pair silently discards the
+# other field and saves a wrong location with a success banner. Every token
+# must look like a real decimal coordinate before a split is attempted.
+
+def test_space_separated_integers_are_not_a_pair(client, tmp_path):
+    """'74 2' must error, not silently save (74, 2) over the typed lat."""
+    response = client.post(
+        "/settings/location",
+        data={"fixed_lat": "40.7", "fixed_lon": "74 2"},
+    )
+    assert response.status_code == 400
+    assert not (tmp_path / "config.json").exists()
+
+
+def test_degrees_minutes_with_space_is_rejected_not_split(client, tmp_path):
+    """'51 28' (51°28′ typed with a space) must error, not become (51, 28)."""
+    _write_creds_only(tmp_path)
+    response = client.post(
+        "/setup/location",
+        data={"fixed_lat": "51 28", "fixed_lon": "0.0"},
+    )
+    assert response.status_code == 400
+    saved = json.loads((tmp_path / "config.json").read_text(encoding="utf-8"))
+    assert "fixed_lat" not in saved
+
+
+def test_eu_comma_with_space_is_rejected_not_split(client, tmp_path):
+    """'40, 71' (EU decimal typed with a space) must error, not become (40, 71)."""
+    response = client.post(
+        "/settings/location",
+        data={"fixed_lat": "40, 71", "fixed_lon": "-74.04"},
+    )
+    assert response.status_code == 400
+    assert not (tmp_path / "config.json").exists()
+
+
+def test_eu_decimal_with_degree_symbol_parses_as_single_value(client, tmp_path):
+    """'48,8584°' is one EU decimal with a degree mark, not the pair (48, 8584)."""
+    response = client.post(
+        "/settings/location",
+        data={"fixed_lat": "48,8584°", "fixed_lon": "2,2945"},
+    )
+    assert response.status_code == 200
+    assert _saved_coords(tmp_path) == (48.8584, 2.2945)
+
+
+def test_trailing_e_is_not_an_east_hemisphere_marker(client, tmp_path):
+    """'-74.0409e' is a typo: it must error, not flip the sign to +74.0409.
+    A hemisphere letter counts only when separated by a space or degree mark."""
+    response = client.post(
+        "/settings/location",
+        data={"fixed_lat": "40.7128", "fixed_lon": "-74.0409e"},
+    )
+    assert response.status_code == 400
+    assert not (tmp_path / "config.json").exists()
+
+
+def test_hemisphere_letter_attached_to_degree_symbol_works(client, tmp_path):
+    """'40.7128°N' (no space, Google Earth style) still parses correctly."""
+    response = client.post(
+        "/settings/location",
+        data={"fixed_lat": "40.7128°N", "fixed_lon": "74.0409°W"},
+    )
+    assert response.status_code == 200
+    assert _saved_coords(tmp_path) == (40.7128, -74.0409)
+
+
+def test_settings_one_blank_field_mentions_clear_path(client, tmp_path):
+    """The settings page HAS a clear-both-to-disable path; a one-blank
+    error must say so (allow_blank=True there, unlike setup step 2)."""
+    response = client.post(
+        "/settings/location",
+        data={"fixed_lat": "", "fixed_lon": "-74.04"},
+    )
+    assert response.status_code == 400
+    assert b"clear both to disable" in response.data
+
+
+def test_geocode_address_rejects_out_of_range_and_nan(monkeypatch):
+    """A hostile/garbage Nominatim payload must not reach the form with a
+    green Matched banner."""
+    from ee_gateway_ui import app as app_module
+
+    class FakeResponse:
+        def __init__(self, body):
+            self._body = body
+        def read(self):
+            return self._body
+        def __enter__(self):
+            return self
+        def __exit__(self, *args):
+            return False
+
+    for bad_lat, bad_lon in (("999", "0"), ("nan", "0"), ("inf", "0")):
+        body = json.dumps([{"lat": bad_lat, "lon": bad_lon,
+                            "display_name": "Nowhere"}]).encode("utf-8")
+        monkeypatch.setattr(
+            app_module.urllib.request, "urlopen",
+            lambda req, timeout=10, _b=body: FakeResponse(_b),
+        )
+        ok, err, hit = app_module.geocode_address("somewhere")
+        assert not ok and hit is None
+
+
+def test_index_renders_dashboard_from_token_only_config(client, tmp_path):
+    """A fresh 0.6.4 install writes a config.json with NO org_id key at
+    all. The full page flow (config + location -> dashboard) must work
+    from that shape — every other fixture in this file carries a legacy
+    org_id, which would mask a reintroduced org_id dependency."""
+    cfg = {"api_token": "tok-xyz", "fixed_lat": 40.7, "fixed_lon": -74.0}
+    (tmp_path / "config.json").write_text(json.dumps(cfg), encoding="utf-8")
+    response = client.get("/")
+    assert response.status_code == 200
+    assert b"40.7" in response.data

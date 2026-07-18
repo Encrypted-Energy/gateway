@@ -328,7 +328,7 @@ def verify_credentials(base_url, api_token, timeout=VERIFY_TIMEOUT_SECONDS):
         headers={
             "Authorization": f"Bearer {api_token}",
             "Accept": "application/json",
-            "User-Agent": "ee-gateway-ui",
+            "User-Agent": f"ee-gateway-ui/{__version__} (https://encryptedenergy.com)",
         },
         method="GET",
     )
@@ -424,9 +424,16 @@ def geocode_address(query, timeout=GEOCODE_TIMEOUT_SECONDS):
                 f"again. {manual_hint}"
             ), None
         best = results[0]
+        lat, lon = float(best["lat"]), float(best["lon"])
+        # Trust but verify: a malformed or hostile response must not put
+        # nan/inf/out-of-range values into the form with a green
+        # "Matched" banner. (nan fails every comparison, so it lands in
+        # the unexpected-response path too.)
+        if not (-90.0 <= lat <= 90.0 and -180.0 <= lon <= 180.0):
+            return False, f"The address lookup returned an unexpected response. {manual_hint}", None
         return True, None, {
-            "lat": float(best["lat"]),
-            "lon": float(best["lon"]),
+            "lat": lat,
+            "lon": lon,
             "display_name": str(best.get("display_name") or q),
         }
     except (KeyError, TypeError, ValueError):
@@ -874,7 +881,9 @@ def create_app(data_dir=None):
                 saved=True,
             )
 
-        ok, err, lat, lon = _parse_coords(raw_lat, raw_lon, allow_blank=False)
+        # allow_blank=True: this page HAS a clear path (both fields
+        # blank, handled above), so a one-blank error must mention it.
+        ok, err, lat, lon = _parse_coords(raw_lat, raw_lon, allow_blank=True)
         if not ok:
             return (
                 render_template(
@@ -926,29 +935,37 @@ def _clean_coord(raw):
     """Normalize one pasted coordinate fragment; return float or ``None``.
 
     Accepts the formats operators actually paste: plain decimals, degree
-    symbols ("40.7128°"), hemisphere letters ("40.7128° N" — S and W flip
-    the sign), Unicode minus, EU decimal commas ("40,7128"), and stray
+    symbols ("40.7128°", "40.7128°N"), hemisphere letters separated by a
+    space or degree mark ("40.7128° N", "40.7128 N" — S and W flip the
+    sign), Unicode minus, EU decimal commas ("40,7128"), and stray
     separators left behind when a pair is split by hand ("40.7128,").
+
+    A hemisphere letter must be separated from the number by whitespace
+    or a degree symbol: "-74.0409e" is a typo, not "74.0409 East", and
+    must fail parsing rather than silently flip the typed sign.
+
     Degrees-minutes-seconds is NOT handled; that failure falls through to
     the form error, which shows the decimal format to use.
     """
-    s = str(raw).translate(_COORD_CHAR_MAP).strip().strip(",;")
-    # Hemisphere letter, prefix or suffix. The letter dictates the sign
-    # (S/W negative), overriding any typed sign.
+    # Degree marks become spaces FIRST so "40.7128°N" reads as a
+    # separated hemisphere letter below.
+    s = str(raw).translate(_COORD_CHAR_MAP).replace("°", " ").strip().strip(",;")
+    # Hemisphere letter, prefix or suffix, whitespace-separated. The
+    # letter dictates the sign (S/W negative), overriding any typed sign.
     sign = None
-    match = re.match(r"(?i)^\s*([NSEW])\s+(.+)$", s)
+    match = re.match(r"(?i)^([NSEW])\s+(.+)$", s)
     if match is None:
-        match = re.match(r"(?i)^(.+?)\s*([NSEW])\s*$", s)
+        match = re.match(r"(?i)^(.+?)\s+([NSEW])$", s)
         if match is not None:
             s, sign = match.group(1), match.group(2)
     else:
         sign, s = match.group(1), match.group(2)
-    s = s.replace("°", "").strip().strip(",;")
+    s = s.strip().strip(",;")
     # EU decimal comma: exactly one comma and no dot means "40,7128" is a
     # decimal, not a pair. Pair splitting happens in _try_parse_pair
-    # BEFORE this function runs, and its comma gate (a dot, a degree
-    # symbol, or whitespace after the separator) is what keeps a bare
-    # "40,7" out of the pair path — keep the two rules in sync.
+    # BEFORE this function runs; its per-token gate (every token must
+    # carry a dot, degree mark, or hemisphere letter) is what keeps bare
+    # integers like "40,7" out of the pair path — keep the rules in sync.
     if s.count(",") == 1 and "." not in s:
         s = s.replace(",", ".")
     try:
@@ -962,6 +979,18 @@ def _clean_coord(raw):
     return value
 
 
+# A pair token must LOOK like a real decimal coordinate — carry a decimal
+# dot, a degree mark, or a standalone hemisphere letter — before we are
+# willing to split one field into two values. Without this gate, inputs
+# like "74 2" or "51 28" (degrees-and-minutes typed with a space) or
+# "40, 71" (EU decimal comma with a space) would silently become a full
+# (lat, lon) pair, discarding whatever the operator typed in the other
+# field — a silent wrong-location save, strictly worse than an error.
+def _looks_like_decimal_coord(part):
+    p = part.strip()
+    return "." in p or "°" in p or bool(re.search(r"(?i)(^|\s|°)[NSEW](\s|°|$)", p))
+
+
 def _try_parse_pair(raw):
     """Return ``(lat, lon)`` if ``raw`` reads as one pasted 'lat, lon' pair.
 
@@ -971,19 +1000,20 @@ def _try_parse_pair(raw):
     hit the float() parser and bounced with "must be numeric" — on the
     majority setup path.
 
-    Disambiguation from an EU decimal comma ("40,7"): a token split is only
-    attempted when the string carries a dot, a degree symbol, whitespace
-    after the comma, or whitespace between two number-like tokens. A bare
-    "40,7" therefore stays a single decimal and never becomes lat=40 lon=7.
+    Both tokens must individually look like decimal coordinates (see
+    _looks_like_decimal_coord). Ambiguous inputs — "40,7" (EU decimal),
+    "51 28" (degrees-and-minutes), "40, 71" — are never split; they
+    either parse as a single value or produce an explicit error, because
+    a wrong guess here silently saves a wrong location.
     """
     s = str(raw or "").translate(_COORD_CHAR_MAP).strip().strip(";,")
     if "," in s or ";" in s:
-        if not ("." in s or "°" in s or re.search(r"[;,]\s", s)):
-            return None
         parts = [p for p in re.split(r"[;,]", s) if p.strip()]
     else:
         parts = s.split()
     if len(parts) != 2:
+        return None
+    if not all(_looks_like_decimal_coord(p) for p in parts):
         return None
     lat, lon = _clean_coord(parts[0]), _clean_coord(parts[1])
     if lat is None or lon is None:

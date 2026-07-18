@@ -25,10 +25,12 @@ ENV PYTHONUNBUFFERED=1 \
     EE_DATA_DIR=/data \
     EE_UI_PORT=8080
 
-# No apt layer on purpose. Unlike the worker, the UI makes no outbound network
-# calls — it only reads files from the shared data dir and serves a local
-# dashboard — so it needs neither ca-certificates nor any Bluetooth userspace.
-# Flask installs from a pure-Python wheel, so no compiler toolchain is needed.
+# No apt layer on purpose. The UI needs no Bluetooth userspace and no compiler
+# toolchain (Flask installs from a pure-Python wheel). It DOES make outbound
+# HTTPS calls — credential verification against encryptedenergy.com (0.6.0+)
+# and address geocoding against nominatim.openstreetmap.org (0.6.4+) — which
+# rely on the ca-certificates bundle already present in the slim base image.
+# If the base image ever drops it, add an apt layer installing ca-certificates.
 
 WORKDIR /app
 
