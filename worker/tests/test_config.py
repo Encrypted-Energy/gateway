@@ -20,11 +20,13 @@ from ee_gateway_worker.config import Config, ConfigError
 
 _ENV_VARS = (
     "EE_API_TOKEN",
-    "HUBBLE_API_TOKEN",
-    "EE_ORG_ID",        # legacy; stripped so a dev shell cannot leak it in
-    "HUBBLE_ORG_ID",    # legacy
     "EE_SCAN_INTERVAL",
     "EE_SCAN_TIMEOUT",
+    # Legacy names, unread since 0.8.0; stripped anyway so a stale dev
+    # shell cannot make a test pass or fail by accident.
+    "HUBBLE_API_TOKEN",
+    "EE_ORG_ID",
+    "HUBBLE_ORG_ID",
 )
 
 
@@ -51,7 +53,7 @@ def test_load_from_file_only(tmp_path):
 
 
 def test_load_from_env_only(tmp_path, monkeypatch):
-    monkeypatch.setenv("HUBBLE_API_TOKEN", "tok-env")
+    monkeypatch.setenv("EE_API_TOKEN", "tok-env")
     cfg = config.load(tmp_path / "does-not-exist.json")
     assert cfg.api_token == "tok-env"
 
@@ -141,7 +143,7 @@ def test_out_of_range_timeout_raises(tmp_path):
 def test_malformed_json_falls_back_to_env(tmp_path, monkeypatch):
     bad = tmp_path / "config.json"
     bad.write_text('{"org_id": "o", "api_token":', encoding="utf-8")  # truncated
-    monkeypatch.setenv("HUBBLE_API_TOKEN", "tok-env")
+    monkeypatch.setenv("EE_API_TOKEN", "tok-env")
     cfg = config.load(bad)  # must not raise on the bad file
     assert cfg.api_token == "tok-env"
 
@@ -156,7 +158,7 @@ def test_malformed_json_without_env_raises_missing_creds(tmp_path):
 def test_json_array_instead_of_object_is_ignored(tmp_path, monkeypatch):
     weird = tmp_path / "config.json"
     weird.write_text("[1, 2, 3]", encoding="utf-8")
-    monkeypatch.setenv("HUBBLE_API_TOKEN", "t")
+    monkeypatch.setenv("EE_API_TOKEN", "t")
     assert config.load(weird).api_token == "t"
 
 

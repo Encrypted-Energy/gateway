@@ -6,6 +6,11 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Changed
+- Worker: legacy HUBBLE_API_TOKEN env alias removed; EE_API_TOKEN (or the
+  config.json written by the setup wizard) is the only way to supply the
+  token. The alias predated the 0.4.0 rename and no real install uses it —
+  Umbrel installs never pass credentials via env, and the token is an
+  ee_live EE credential, not a Hubble one.
 - Worker: org_id removed from Config entirely (field, env resolution, and
   constructor). EE resolves the organization server-side from the bearer
   token, so the value was collected but never transmitted; 0.10.6 had

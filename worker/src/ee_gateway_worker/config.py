@@ -18,8 +18,8 @@ token and the scan-loop timings.
 
 Values come from three sources, highest priority first:
 
-1. environment variables (``EE_API_TOKEN``/``HUBBLE_API_TOKEN``,
-   ``EE_SCAN_INTERVAL``, ``EE_SCAN_TIMEOUT``);
+1. environment variables (``EE_API_TOKEN``, ``EE_SCAN_INTERVAL``,
+   ``EE_SCAN_TIMEOUT``);
 2. the JSON file the UI container writes (``config.json``);
 3. built-in defaults.
 
@@ -123,17 +123,14 @@ def load(config_path: str | Path) -> Config:
             return file_data[file_key]
         return default
 
-    # EE_* are the canonical env var names from 0.4.0 onward. HUBBLE_* still
-    # work for back-compat with installs created before the pivot. Env value
-    # wins over file value; either canonical or legacy env name is accepted.
     # The bearer token is the only credential: EE resolves the organization
     # from it server-side. (org_id was required until worker 0.8.0 but never
-    # sent anywhere; a leftover org_id key in config.json is ignored.)
-    api_token = (
-        os.environ.get("EE_API_TOKEN")
-        or os.environ.get("HUBBLE_API_TOKEN")
-        or file_data.get("api_token")
-    )
+    # sent anywhere; a leftover org_id key in config.json is ignored. The
+    # legacy HUBBLE_API_TOKEN env alias was dropped in 0.8.0 too: every
+    # real install post-dates the 0.4.0 rename, gets its token from
+    # config.json via the setup wizard, and the token is an ee_live EE
+    # credential, not a Hubble one.)
+    api_token = os.environ.get("EE_API_TOKEN") or file_data.get("api_token")
     if not api_token:
         raise ConfigError("missing required credential(s): api_token (EE_API_TOKEN)")
 
