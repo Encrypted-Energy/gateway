@@ -6,6 +6,34 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- Gateway 0.10.6 (worker 0.7.7): retryable upstream errors. The worker's
+  ingest client now treats HTTP 408 (request timeout) and 429 (rate
+  limit) from EE as transient: the packet stays pending and is retried
+  on the next ingest pass, instead of being classified terminal and
+  dropped permanently. New `worker/tests/test_ee_client.py` covers the
+  transient / terminal / unauthorized status mapping. Also re-syncs
+  `worker/pyproject.toml` (0.7.4 -> 0.7.7) and `ui/pyproject.toml`
+  (0.6.2 -> 0.6.3) with their `__init__.py` `__version__` values, which
+  had drifted. UI unchanged at 0.6.3.
+- Gateway 0.10.5 (worker 0.7.6 + UI 0.6.3): (0.0, 0.0) fixed-location
+  fix, both sides. The UI's coordinate parser rejects (0, 0) with an
+  actionable error (it is the classic "unset override" tell and every
+  packet stamped with it is rejected upstream with an opaque 422), and
+  the worker's GpsClient ignores a (0, 0) it finds in config.json and
+  falls back to gpsd, as defense in depth. Also adds the EE_GPS_BAUD
+  env var, a baud hint for gpsd for u-blox M10-based receivers that
+  default to 38400 (auto-probe can miss it); unset by default so
+  standard consumer dongles keep working via auto-probe.
+- Gateway 0.10.4 (worker 0.7.5): security hardening. The bundled gpsd
+  no longer starts with -G, so it binds 127.0.0.1:2947 (loopback only)
+  instead of 0.0.0.0:2947. Because the worker runs with network_mode:
+  host, -G was exposing a LAN-facing GPS listener with no legitimate
+  consumer. The worker reads gpsd over loopback; no functional change.
+  UI unchanged.
+- Gateway 0.10.3: manifest-only listing rebrand. Tagline and
+  description repositioned as a generic self-hosted Bluetooth gateway
+  for open BLE networks, with Hubble Network named as the first
+  supported upstream. No image rebuilds; worker and UI unchanged.
 - Gateway 0.10.2 (UI 0.6.2): polish pass on the setup wizard and
   dashboard. Setup step 2 pre-fills the North Pole (90, 0) as an
   obvious placeholder (replaces the 0.10.1 attempt at Hubble HQ,

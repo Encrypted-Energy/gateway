@@ -1,6 +1,6 @@
 [project]
 name = "ee-gateway-ui"
-version = "0.6.2"
+version = "0.6.3"
 description = "EE Gateway UI — setup wizard and dashboard for the EE Gateway Hubble BLE gateway."
 requires-python = ">=3.11"
 license = { text = "GPL-3.0-only" }
