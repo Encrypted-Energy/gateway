@@ -27,7 +27,13 @@
   </p>
   {% endif %}
 
+  {# Standalone lookup form, deliberately SEPARATE from the save form
+     below: with two submit buttons in one form, pressing Enter in a
+     coordinate field would implicitly trigger the FIRST button (the
+     lookup) with a blank address. Separate forms give each text field
+     the Enter behavior the operator expects. #}
   <form class="form" method="post" action="{{ url_for('save_settings_location') }}" autocomplete="off">
+    <input type="hidden" name="action" value="lookup">
     <label class="field">
       <span class="field-label">Address or place</span>
       <input class="field-input" type="text" name="address" value="{{ address or '' }}"
@@ -40,16 +46,17 @@
     </label>
 
     <div class="form-actions">
-      <button class="btn btn-ghost btn-block" type="submit"
-              name="action" value="lookup" formnovalidate>Find coordinates</button>
+      <button class="btn btn-ghost btn-block" type="submit">Find coordinates</button>
     </div>
+  </form>
 
-    {% if geocoded %}
-    <p class="alert alert-success" role="status">
-      Matched: {{ geocoded }}. Check the coordinates below, then save.
-    </p>
-    {% endif %}
+  {% if geocoded %}
+  <p class="alert alert-success" role="status">
+    Matched: {{ geocoded }}. Check the coordinates below, then save.
+  </p>
+  {% endif %}
 
+  <form class="form" method="post" action="{{ url_for('save_settings_location') }}" autocomplete="off">
     <label class="field">
       <span class="field-label">Latitude</span>
       <input class="field-input" type="text" name="fixed_lat" value="{{ fixed_lat }}"

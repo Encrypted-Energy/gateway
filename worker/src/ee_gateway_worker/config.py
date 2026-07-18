@@ -13,18 +13,21 @@
 
 """Gateway configuration.
 
-A :class:`Config` carries everything the worker needs to run: the Hubble
-credentials and the scan-loop timings.
+A :class:`Config` carries everything the worker needs to run: the API
+token and the scan-loop timings.
 
 Values come from three sources, highest priority first:
 
-1. environment variables (``HUBBLE_ORG_ID``, ``HUBBLE_API_TOKEN``,
-   ``EE_SCAN_INTERVAL``, ``EE_SCAN_TIMEOUT``);
+1. environment variables (``EE_API_TOKEN``, ``EE_SCAN_INTERVAL``,
+   ``EE_SCAN_TIMEOUT``, plus legacy ``HUBBLE_*`` aliases);
 2. the JSON file the UI container writes (``config.json``);
 3. built-in defaults.
 
-Credentials have no default — they must come from the env or the file, or
-loading fails. The two timing values have defaults and a range check.
+The API token is the one required credential — it must come from the env
+or the file, or loading fails. ``org_id`` is a legacy field (pre-0.7.7):
+still read from env/file into :class:`Config` for back-compat, never
+required, never consumed. The two timing values have defaults and a
+range check.
 
 The worker reloads this configuration every scan cycle, so a save from the UI
 takes effect within one cycle. A malformed or half-written file (the UI caught

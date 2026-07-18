@@ -159,3 +159,19 @@ def test_json_array_instead_of_object_is_ignored(tmp_path, monkeypatch):
     monkeypatch.setenv("HUBBLE_ORG_ID", "o")
     monkeypatch.setenv("HUBBLE_API_TOKEN", "t")
     assert config.load(weird).org_id == "o"
+
+
+def test_version_metadata_in_sync():
+    """pyproject.toml and __init__.py __version__ must agree. This drift
+    shipped three releases in a row (pyproject 0.7.4 under a 0.7.6
+    worker) before 0.10.6 re-synced them; this test makes the next
+    drift a test failure instead of a release-notes archaeology item."""
+    import tomllib
+    from pathlib import Path
+
+    import ee_gateway_worker
+
+    pyproject = Path(__file__).resolve().parents[1] / "pyproject.toml"
+    with open(pyproject, "rb") as fh:
+        declared = tomllib.load(fh)["project"]["version"]
+    assert declared == ee_gateway_worker.__version__

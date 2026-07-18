@@ -5,63 +5,91 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+Nothing yet.
+
+## [0.10.6] - 2026-07-18
+
 ### Added
-- Gateway 0.10.6 (worker 0.7.7 + UI 0.6.4): the fixed-location flow —
-  the majority setup path now that the official Umbrel store is the
-  primary funnel and most operators have no GPS dongle — gets three
-  coordinated fixes, plus a worker reliability fix.
-  (1) Address geocoding: both location forms (setup step 2 and
-  /settings/location) grow an "Address or place" field with a "Find
-  coordinates" button. It resolves via OpenStreetMap's public Nominatim
+- Address geocoding on both location forms (setup step 2 and
+  /settings/location): an "Address or place" field with a "Find
+  coordinates" button, resolved via OpenStreetMap's public Nominatim
   (no API key; called only on operator click, well inside the usage
-  policy), fills the coordinate fields for review, and never saves
-  without explicit confirmation. Lookup failures degrade to manual
-  entry with an actionable message.
-  (2) Coordinate parsing now accepts what operators actually paste:
-  the full "lat, lon" pair from Google Maps' right-click copy dropped
-  into either field (it wins over the other field, including the
-  North-Pole prefill), degree symbols, N/S/E/W hemisphere letters
-  (S/W flip the sign), Unicode minus (Wikipedia), EU decimal commas
-  ("40,7128" — disambiguated from pair pastes, which always carry a
-  dot, a space, or a degree mark), and stray trailing commas from
-  hand-split pairs. Degrees-minutes-seconds still rejects, now with an
-  error that shows the decimal format. Before this, the "must be
-  numeric" rejection fired on the exact paste flow the form's own hint
-  recommended.
-  (3) Org ID removed from setup: the ee_live API token alone
+  policy). Fills the coordinate fields for review and never saves
+  without explicit confirmation; lookup failures degrade to manual
+  entry with an actionable message. The lookup lives in its own form
+  so pressing Enter in a coordinate field saves and pressing Enter in
+  the address field looks up. UI 0.6.4.
+- Coordinate parsing now accepts what operators actually paste: the
+  full "lat, lon" pair from Google Maps' right-click copy dropped into
+  either field (it wins over the other field, including the North-Pole
+  prefill), degree symbols, N/S/E/W hemisphere letters (S/W flip the
+  sign), Unicode minus (Wikipedia), EU decimal commas ("40,7128" —
+  disambiguated from pair pastes by requiring a dot, a degree symbol,
+  or whitespace after the separator before splitting), and stray
+  trailing commas from hand-split pairs. Degrees-minutes-seconds still
+  rejects, now with an error that shows the decimal format. Before
+  this, the "must be numeric" rejection fired on the exact paste flow
+  the form's own hint recommended — the majority setup path now that
+  the official Umbrel store is the primary install funnel.
+
+### Changed
+- Org ID removed from setup: the ee_live API token alone
   authenticates, so the organization ID field (never consumed by any
-  code path) is gone from the wizard. The worker no longer requires
-  org_id in config.json; a legacy key from an older install is
-  preserved on disk and ignored. Existing installs keep working
+  code path) is gone from the wizard. The worker (0.7.7) no longer
+  requires org_id in config.json; a legacy key from an older install
+  is preserved on disk and ignored. Existing installs keep working
   unchanged.
-  (4) Retryable upstream errors: the worker's ingest client now treats
-  HTTP 408 (request timeout) and 429 (rate limit) from EE as
+
+### Fixed
+- Retryable upstream errors (worker 0.7.7): the ingest client now
+  treats HTTP 408 (request timeout) and 429 (rate limit) from EE as
   transient — the packet stays pending and retries on the next ingest
   pass instead of being classified terminal and dropped permanently.
-  New `worker/tests/test_ee_client.py` covers the transient / terminal
-  / unauthorized mapping.
-  Also re-syncs `worker/pyproject.toml` (0.7.4 -> 0.7.7) and
-  `ui/pyproject.toml` (0.6.2 -> 0.6.4) with their `__init__.py`
-  `__version__` values, which had drifted.
-- Gateway 0.10.5 (worker 0.7.6 + UI 0.6.3): (0.0, 0.0) fixed-location
-  fix, both sides. The UI's coordinate parser rejects (0, 0) with an
-  actionable error (it is the classic "unset override" tell and every
-  packet stamped with it is rejected upstream with an opaque 422), and
-  the worker's GpsClient ignores a (0, 0) it finds in config.json and
-  falls back to gpsd, as defense in depth. Also adds the EE_GPS_BAUD
-  env var, a baud hint for gpsd for u-blox M10-based receivers that
-  default to 38400 (auto-probe can miss it); unset by default so
-  standard consumer dongles keep working via auto-probe.
-- Gateway 0.10.4 (worker 0.7.5): security hardening. The bundled gpsd
-  no longer starts with -G, so it binds 127.0.0.1:2947 (loopback only)
-  instead of 0.0.0.0:2947. Because the worker runs with network_mode:
-  host, -G was exposing a LAN-facing GPS listener with no legitimate
-  consumer. The worker reads gpsd over loopback; no functional change.
-  UI unchanged.
-- Gateway 0.10.3: manifest-only listing rebrand. Tagline and
-  description repositioned as a generic self-hosted Bluetooth gateway
-  for open BLE networks, with Hubble Network named as the first
-  supported upstream. No image rebuilds; worker and UI unchanged.
+  New worker/tests/test_ee_client.py covers the transient / terminal /
+  unauthorized mapping.
+- Version metadata drift: worker/pyproject.toml (0.7.4 -> 0.7.7) and
+  ui/pyproject.toml (0.6.2 -> 0.6.4) re-synced with their __init__.py
+  __version__ values; new tests in both packages now fail on any
+  future drift.
+
+## [0.10.5] - 2026-07-05
+
+### Fixed
+- (0.0, 0.0) fixed-location fix, both sides (worker 0.7.6 + UI 0.6.3):
+  the UI's coordinate parser rejects (0, 0) with an actionable error
+  (it is the classic "unset override" tell and every packet stamped
+  with it is rejected upstream with an opaque 422), and the worker's
+  GpsClient ignores a (0, 0) it finds in config.json and falls back to
+  gpsd, as defense in depth.
+
+### Added
+- EE_GPS_BAUD env var: a baud hint for gpsd for u-blox M10-based
+  receivers that default to 38400 (auto-probe can miss it); unset by
+  default so standard consumer dongles keep working via auto-probe.
+
+## [0.10.4] - 2026-06-27
+
+### Security
+- The bundled gpsd (worker 0.7.5) no longer starts with -G, so it
+  binds 127.0.0.1:2947 (loopback only) instead of 0.0.0.0:2947.
+  Because the worker runs with network_mode: host, -G was exposing a
+  LAN-facing GPS listener with no legitimate consumer. The worker
+  reads gpsd over loopback; no functional change. UI unchanged.
+
+## [0.10.3] - 2026-06-19
+
+### Changed
+- Manifest-only listing rebrand: tagline and description repositioned
+  as a generic self-hosted Bluetooth gateway for open BLE networks,
+  with Hubble Network named as the first supported upstream. No image
+  rebuilds; worker and UI unchanged.
+
+## [0.10.2 and earlier] - released through 2026-06-20
+
+Entries below predate the move to dated release sections; each bullet
+names the release it shipped in.
+
+### Added
 - Gateway 0.10.2 (UI 0.6.2): polish pass on the setup wizard and
   dashboard. Setup step 2 pre-fills the North Pole (90, 0) as an
   obvious placeholder (replaces the 0.10.1 attempt at Hubble HQ,

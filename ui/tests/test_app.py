@@ -750,8 +750,7 @@ def test_settings_lookup_fills_fields_without_saving(client, tmp_path, monkeypat
     calls = _stub_geocode(monkeypatch)
     response = client.post(
         "/settings/location",
-        data={"action": "lookup", "address": "350 5th Ave, New York",
-              "fixed_lat": "", "fixed_lon": ""},
+        data={"action": "lookup", "address": "350 5th Ave, New York"},
     )
     assert response.status_code == 200
     assert calls == ["350 5th Ave, New York"]
@@ -771,8 +770,7 @@ def test_settings_lookup_failure_shows_error_and_manual_path(client, tmp_path, m
     )
     response = client.post(
         "/settings/location",
-        data={"action": "lookup", "address": "asdfghjkl",
-              "fixed_lat": "", "fixed_lon": ""},
+        data={"action": "lookup", "address": "asdfghjkl"},
     )
     assert response.status_code == 400
     assert b"No match" in response.data
@@ -787,8 +785,7 @@ def test_setup_lookup_then_save_flow(client, tmp_path, monkeypatch):
     _stub_geocode(monkeypatch)
     lookup = client.post(
         "/setup/location",
-        data={"action": "lookup", "address": "350 5th Ave, New York",
-              "fixed_lat": "90.0", "fixed_lon": "0.0"},
+        data={"action": "lookup", "address": "350 5th Ave, New York"},
     )
     assert lookup.status_code == 200
     assert b"40.748441" in lookup.data
@@ -851,3 +848,46 @@ def test_geocode_address_no_match_and_blank_query(monkeypatch):
     ok, err, hit = app_module.geocode_address("nowhere at all")
     assert not ok and hit is None
     assert "No match" in err
+
+
+def test_settings_lookup_failure_preserves_saved_coordinates(client, tmp_path, monkeypatch):
+    """A failed lookup on the settings page re-renders with the currently
+    saved location still in the coordinate fields (the standalone lookup
+    form does not carry them), so the operator's working config is never
+    visually replaced by an error state."""
+    _write_full_config(tmp_path)
+    _stub_geocode(monkeypatch, result=(False, "No match for that address.", None))
+    response = client.post(
+        "/settings/location",
+        data={"action": "lookup", "address": "asdfghjkl"},
+    )
+    assert response.status_code == 400
+    assert b"40.712082" in response.data
+    assert b"-74.0409" in response.data
+
+
+def test_location_pair_out_of_range_gets_accurate_range_message(client, tmp_path):
+    """An out-of-range pair paste reports the range error, not a
+    misleading 'must be decimal degrees' / 'both required' error."""
+    response = client.post(
+        "/settings/location",
+        data={"fixed_lat": "95.0, 10.0", "fixed_lon": ""},
+    )
+    assert response.status_code == 400
+    assert b"between -90 and 90" in response.data
+    assert not (tmp_path / "config.json").exists()
+
+
+def test_version_metadata_in_sync():
+    """pyproject.toml and __init__.py __version__ must agree. This drift
+    shipped three releases in a row (0.7.4 pyproject under a 0.7.6
+    worker) before 0.10.6 re-synced them; this test makes the next
+    drift a test failure instead of a release-notes archaeology item."""
+    import tomllib
+    from pathlib import Path
+    import ee_gateway_ui
+
+    pyproject = Path(__file__).resolve().parents[1] / "pyproject.toml"
+    with open(pyproject, "rb") as fh:
+        declared = tomllib.load(fh)["project"]["version"]
+    assert declared == ee_gateway_ui.__version__

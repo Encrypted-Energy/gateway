@@ -755,12 +755,12 @@ def create_app(data_dir=None):
         if read_config(data_dir) is None:
             return redirect(url_for("setup"))
 
-        raw_lat = (request.form.get("fixed_lat") or "").strip()
-        raw_lon = (request.form.get("fixed_lon") or "").strip()
-
         # "Find coordinates" submit: geocode the address and re-render the
-        # form with the coordinate fields filled in for review. Nothing is
-        # saved until the operator confirms with the save submit.
+        # page with the coordinate fields filled in for review. Nothing is
+        # saved until the operator confirms with the save submit. The
+        # lookup lives in its own <form> (see the template comment), so
+        # this POST carries only the address — on failure the coordinate
+        # fields re-render with their setup defaults.
         if request.form.get("action") == "lookup":
             address = (request.form.get("address") or "").strip()
             ok, err, hit = geocode_address(address)
@@ -768,8 +768,8 @@ def create_app(data_dir=None):
                 return (
                     render_template(
                         "setup_location.html",
-                        fixed_lat=raw_lat,
-                        fixed_lon=raw_lon,
+                        fixed_lat="",
+                        fixed_lon="",
                         address=address,
                         error=err,
                     ),
@@ -783,6 +783,9 @@ def create_app(data_dir=None):
                 geocoded=hit["display_name"],
                 error=None,
             )
+
+        raw_lat = (request.form.get("fixed_lat") or "").strip()
+        raw_lon = (request.form.get("fixed_lon") or "").strip()
 
         ok, err, lat, lon = _parse_coords(raw_lat, raw_lon, allow_blank=False)
         if not ok:
@@ -827,20 +830,20 @@ def create_app(data_dir=None):
         On success, the worker is asked to restart so the new GpsClient
         picks up the change on next boot.
         """
-        raw_lat = (request.form.get("fixed_lat") or "").strip()
-        raw_lon = (request.form.get("fixed_lon") or "").strip()
-
         # "Find coordinates" submit — same review-then-save flow as setup
-        # step 2; see save_setup_location.
+        # step 2; see save_setup_location. On failure the coordinate
+        # fields re-render with the currently saved location, since the
+        # standalone lookup form doesn't carry them.
         if request.form.get("action") == "lookup":
             address = (request.form.get("address") or "").strip()
             ok, err, hit = geocode_address(address)
             if not ok:
+                cur_lat, cur_lon = read_advanced_config(data_dir)
                 return (
                     render_template(
                         "settings_location.html",
-                        fixed_lat=raw_lat,
-                        fixed_lon=raw_lon,
+                        fixed_lat="" if cur_lat is None else cur_lat,
+                        fixed_lon="" if cur_lon is None else cur_lon,
                         address=address,
                         error=err,
                         saved=False,
@@ -856,6 +859,9 @@ def create_app(data_dir=None):
                 error=None,
                 saved=False,
             )
+
+        raw_lat = (request.form.get("fixed_lat") or "").strip()
+        raw_lon = (request.form.get("fixed_lon") or "").strip()
 
         if not raw_lat and not raw_lon:
             write_advanced_config(data_dir, None, None)
@@ -902,9 +908,11 @@ def create_app(data_dir=None):
     return app
 
 
-# Characters that arrive in real-world coordinate pastes but that float()
-# rejects. Wikipedia renders negatives with a Unicode minus (U+2212);
-# copy from a PDF or chat app can carry non-breaking / narrow spaces.
+# Characters that arrive in real-world coordinate pastes. The dash
+# entries are load-bearing (float() rejects them); the space entries are
+# defense in depth only — Python's float(), str.strip(), and re's \s all
+# already treat these Unicode spaces as whitespace — kept so the
+# normalized string is plain ASCII regardless of paste source.
 _COORD_CHAR_MAP = str.maketrans({
     "−": "-",   # Unicode minus (Wikipedia, some GPS apps)
     "–": "-",   # en dash, occasionally substituted by rich-text editors
@@ -937,8 +945,10 @@ def _clean_coord(raw):
         sign, s = match.group(1), match.group(2)
     s = s.replace("°", "").strip().strip(",;")
     # EU decimal comma: exactly one comma and no dot means "40,7128" is a
-    # decimal, not a pair (pairs are handled before this function is
-    # called, and always contain a dot, a space, or a second sign).
+    # decimal, not a pair. Pair splitting happens in _try_parse_pair
+    # BEFORE this function runs, and its comma gate (a dot, a degree
+    # symbol, or whitespace after the separator) is what keeps a bare
+    # "40,7" out of the pair path — keep the two rules in sync.
     if s.count(",") == 1 and "." not in s:
         s = s.replace(",", ".")
     try:
@@ -978,9 +988,11 @@ def _try_parse_pair(raw):
     lat, lon = _clean_coord(parts[0]), _clean_coord(parts[1])
     if lat is None or lon is None:
         return None
-    if -90.0 <= lat <= 90.0 and -180.0 <= lon <= 180.0:
-        return lat, lon
-    return None
+    # No range check here: _parse_coords owns validation, so an
+    # out-of-range pair paste like "95.0, 10.0" gets the accurate
+    # "Latitude must be between -90 and 90" message instead of falling
+    # through to the single-field path and a misleading error.
+    return lat, lon
 
 
 def _parse_coords(raw_lat, raw_lon, *, allow_blank):
