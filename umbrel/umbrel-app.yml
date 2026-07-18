@@ -17,12 +17,23 @@ icon: https://raw.githubusercontent.com/Encrypted-Energy/umbrel-community-app-st
 category: Networking
 version: "0.10.6"
 releaseNotes: >-
-  Reliability fix for busy gateways. Worker bumped to 0.7.7: when the
-  EE cloud answers a packet upload with HTTP 408 (request timeout) or
-  429 (rate limited), the worker now keeps that packet queued and
-  retries it on the next ingest pass instead of dropping it
-  permanently. Previously any throttled upload was lost for good.
-  UI unchanged at 0.6.3.
+  Setup gets much easier. You can now type a street address or
+  landmark and the gateway looks up the coordinates for you, on both
+  the setup wizard and the location settings page. Coordinate entry
+  also accepts what people actually paste: the full "lat, lon" pair
+  copied from Google Maps dropped into either field, degree symbols,
+  N/S/E/W letters, and European decimal commas all work now.
+
+
+  Setup is also one field shorter: the organization ID is gone. Your
+  API token alone connects the gateway; existing installs are
+  unaffected and need no changes.
+
+
+  Reliability fix for busy gateways: when the EE cloud answers a
+  packet upload with HTTP 408 (request timeout) or 429 (rate limited),
+  the worker now keeps that packet queued and retries it on the next
+  pass instead of dropping it permanently. Worker 0.7.7, UI 0.6.4.
 port: 8080
 description: >-
   EE Gateway turns your Umbrel into a self-hosted Bluetooth gateway for
@@ -38,8 +49,8 @@ description: >-
 
   Two containers do the work: a worker that scans over Bluetooth and ingests
   packets upstream, and a small web dashboard for first-time setup and live
-  status. Enter your network organization ID and API token once in the setup
-  wizard, and the gateway runs on its own.
+  status. Enter your API token once in the setup wizard, and the gateway
+  runs on its own.
 
 
   EE Gateway is free and open-source software (GPL-3.0-only), built by

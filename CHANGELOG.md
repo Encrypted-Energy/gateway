@@ -6,15 +6,43 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
-- Gateway 0.10.6 (worker 0.7.7): retryable upstream errors. The worker's
-  ingest client now treats HTTP 408 (request timeout) and 429 (rate
-  limit) from EE as transient: the packet stays pending and is retried
-  on the next ingest pass, instead of being classified terminal and
-  dropped permanently. New `worker/tests/test_ee_client.py` covers the
-  transient / terminal / unauthorized status mapping. Also re-syncs
-  `worker/pyproject.toml` (0.7.4 -> 0.7.7) and `ui/pyproject.toml`
-  (0.6.2 -> 0.6.3) with their `__init__.py` `__version__` values, which
-  had drifted. UI unchanged at 0.6.3.
+- Gateway 0.10.6 (worker 0.7.7 + UI 0.6.4): the fixed-location flow —
+  the majority setup path now that the official Umbrel store is the
+  primary funnel and most operators have no GPS dongle — gets three
+  coordinated fixes, plus a worker reliability fix.
+  (1) Address geocoding: both location forms (setup step 2 and
+  /settings/location) grow an "Address or place" field with a "Find
+  coordinates" button. It resolves via OpenStreetMap's public Nominatim
+  (no API key; called only on operator click, well inside the usage
+  policy), fills the coordinate fields for review, and never saves
+  without explicit confirmation. Lookup failures degrade to manual
+  entry with an actionable message.
+  (2) Coordinate parsing now accepts what operators actually paste:
+  the full "lat, lon" pair from Google Maps' right-click copy dropped
+  into either field (it wins over the other field, including the
+  North-Pole prefill), degree symbols, N/S/E/W hemisphere letters
+  (S/W flip the sign), Unicode minus (Wikipedia), EU decimal commas
+  ("40,7128" — disambiguated from pair pastes, which always carry a
+  dot, a space, or a degree mark), and stray trailing commas from
+  hand-split pairs. Degrees-minutes-seconds still rejects, now with an
+  error that shows the decimal format. Before this, the "must be
+  numeric" rejection fired on the exact paste flow the form's own hint
+  recommended.
+  (3) Org ID removed from setup: the ee_live API token alone
+  authenticates, so the organization ID field (never consumed by any
+  code path) is gone from the wizard. The worker no longer requires
+  org_id in config.json; a legacy key from an older install is
+  preserved on disk and ignored. Existing installs keep working
+  unchanged.
+  (4) Retryable upstream errors: the worker's ingest client now treats
+  HTTP 408 (request timeout) and 429 (rate limit) from EE as
+  transient — the packet stays pending and retries on the next ingest
+  pass instead of being classified terminal and dropped permanently.
+  New `worker/tests/test_ee_client.py` covers the transient / terminal
+  / unauthorized mapping.
+  Also re-syncs `worker/pyproject.toml` (0.7.4 -> 0.7.7) and
+  `ui/pyproject.toml` (0.6.2 -> 0.6.4) with their `__init__.py`
+  `__version__` values, which had drifted.
 - Gateway 0.10.5 (worker 0.7.6 + UI 0.6.3): (0.0, 0.0) fixed-location
   fix, both sides. The UI's coordinate parser rejects (0, 0) with an
   actionable error (it is the classic "unset override" tell and every

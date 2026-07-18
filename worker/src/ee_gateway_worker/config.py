@@ -65,8 +65,12 @@ class ConfigError(Exception):
 class Config:
     """A validated, immutable gateway configuration."""
 
-    org_id: str
     api_token: str
+    # Legacy field (pre-0.7.7). Nothing consumes it — auth is the ee_live
+    # token alone — but installs configured before the org-ID field was
+    # removed from the UI still carry it in config.json, so it is read
+    # and kept for forward-compat rather than treated as an error.
+    org_id: str = ""
     scan_interval: int = DEFAULT_SCAN_INTERVAL
     scan_timeout: int = DEFAULT_SCAN_TIMEOUT
     ee_base_url: str = DEFAULT_EE_BASE_URL
@@ -131,13 +135,11 @@ def load(config_path: str | Path) -> Config:
         or os.environ.get("HUBBLE_API_TOKEN")
         or file_data.get("api_token")
     )
-    if not org_id or not api_token:
-        missing = []
-        if not org_id:
-            missing.append("org_id (EE_ORG_ID)")
-        if not api_token:
-            missing.append("api_token (EE_API_TOKEN)")
-        raise ConfigError("missing required credential(s): " + ", ".join(missing))
+    # Only the API token is required (0.7.7+). org_id used to be required
+    # here, but it was never consumed anywhere — the ee_live token alone
+    # authenticates against ee-web — and the UI no longer collects it.
+    if not api_token:
+        raise ConfigError("missing required credential(s): api_token (EE_API_TOKEN)")
 
     scan_interval = _coerce_int(
         pick("EE_SCAN_INTERVAL", "scan_interval", DEFAULT_SCAN_INTERVAL),
@@ -191,7 +193,7 @@ def load(config_path: str | Path) -> Config:
         fixed_lon = None
 
     return Config(
-        org_id=str(org_id),
+        org_id=str(org_id or ""),
         api_token=str(api_token),
         scan_interval=scan_interval,
         scan_timeout=scan_timeout,

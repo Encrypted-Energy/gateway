@@ -8,8 +8,8 @@
 # network (which it needs to reach the Bluetooth radio) while the UI stays on
 # Umbrel's app network behind app_proxy.
 #
-# Credentials are NOT passed as environment variables here. The user enters the
-# Hubble org id and API token once in the UI setup wizard, which writes them to
+# Credentials are NOT passed as environment variables here. The user enters
+# their API token once in the UI setup wizard, which writes it to
 # config.json in the shared volume; the worker reads that file every scan cycle.
 #
 # umbreld creates ${APP_DATA_DIR}/data owned by root, but both app containers
@@ -45,7 +45,7 @@ services:
   # no added capabilities, no Bluetooth access. Runs as uid 1000 (set in the
   # image). init: true so SIGTERM reaches Flask for a clean shutdown.
   ui:
-    image: encryptedenergy/ee-gateway-ui:0.6.3
+    image: encryptedenergy/ee-gateway-ui:0.6.4
     init: true
     depends_on:
       init_perms:

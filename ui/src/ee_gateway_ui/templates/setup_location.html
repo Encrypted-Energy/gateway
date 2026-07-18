@@ -23,6 +23,29 @@
 
   <form class="form" method="post" action="{{ url_for('save_setup_location') }}" autocomplete="off">
     <label class="field">
+      <span class="field-label">Address or place</span>
+      <input class="field-input" type="text" name="address" value="{{ address or '' }}"
+             placeholder="350 5th Ave, New York" spellcheck="false"
+             autocomplete="off">
+      <span class="field-hint">
+        Street address, city, or landmark. We look up the coordinates
+        for you (via OpenStreetMap). Roughly the right block is plenty
+        of accuracy.
+      </span>
+    </label>
+
+    <div class="form-actions">
+      <button class="btn btn-ghost btn-block" type="submit"
+              name="action" value="lookup" formnovalidate>Find coordinates</button>
+    </div>
+
+    {% if geocoded %}
+    <p class="alert alert-success" role="status">
+      Matched: {{ geocoded }}. Check the coordinates below, then save.
+    </p>
+    {% endif %}
+
+    <label class="field">
       <span class="field-label">Latitude</span>
       <input class="field-input" type="text" name="fixed_lat" value="{{ fixed_lat or '90.0' }}"
              placeholder="90.0" inputmode="decimal" spellcheck="false"
@@ -44,12 +67,14 @@
 
     <p class="field-hint" style="margin-top: 4px;">
       Pre-filled to the North Pole (90, 0) so it's obvious you haven't
-      set it yet. To find your real coordinates, open Google Maps,
-      right-click the spot, and copy the lat/lon at the top of the menu.
+      set it yet. Prefer entering coordinates yourself? Open Google
+      Maps, right-click the spot, copy the pair at the top of the menu,
+      and paste it straight into either field.
     </p>
 
     <div class="form-actions">
-      <button class="btn btn-primary btn-block" type="submit">Save location and start gateway</button>
+      <button class="btn btn-primary btn-block" type="submit"
+              name="action" value="save">Save location and start gateway</button>
     </div>
   </form>
 </section>

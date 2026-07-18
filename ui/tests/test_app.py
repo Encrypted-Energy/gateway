@@ -79,7 +79,10 @@ def _write_state(data_dir, state):
 
 
 def _write_creds_only(data_dir, **overrides):
-    """Write a config.json with credentials but no location (step-1 done)."""
+    """Write a config.json with credentials but no location (step-1 done).
+
+    Includes a legacy org_id key, as any pre-0.6.4 install would — every
+    test using this helper doubles as back-compat coverage for it."""
     cfg = {"org_id": "org-abc", "api_token": "tok-xyz"}
     cfg.update(overrides)
     (data_dir / "config.json").write_text(json.dumps(cfg), encoding="utf-8")
@@ -143,22 +146,23 @@ def test_index_unconfigured_shows_setup_step_1(client):
     # Use form-field labels as the durable marker; the page heading copy
     # has been rebranded once already (Hubble -> Encrypted Energy) and a
     # test pinned to that wording silently rotted until 0.6.3.
-    assert b"Organization ID" in response.data
     assert b"API token" in response.data
     assert b"Step 1 of 2" in response.data
+    # The org-ID field was removed in 0.6.4 (token-only setup).
+    assert b"Organization ID" not in response.data
 
 
 def test_post_valid_config_redirects_to_step_2(client, tmp_path):
     """A valid POST writes config.json and redirects to setup step 2."""
     response = client.post(
         "/config",
-        data={"org_id": "org-abc", "api_token": "tok-xyz"},
+        data={"api_token": "tok-xyz"},
     )
     assert response.status_code == 302
     assert response.headers["Location"].endswith("/setup/location")
 
     saved = json.loads((tmp_path / "config.json").read_text(encoding="utf-8"))
-    assert saved["org_id"] == "org-abc"
+    assert "org_id" not in saved  # token-only setup from 0.6.4
     assert saved["api_token"] == "tok-xyz"
     assert isinstance(saved["saved_at"], int)
     # Step 1 alone does NOT set a location yet.
@@ -170,7 +174,7 @@ def test_post_valid_config_skips_step_2_when_location_already_set(client, tmp_pa
     _write_full_config(tmp_path)
     response = client.post(
         "/config",
-        data={"org_id": "org-new", "api_token": "tok-new"},
+        data={"api_token": "tok-new"},
     )
     assert response.status_code == 302
     # No /setup/location detour — straight to the dashboard.
@@ -181,7 +185,7 @@ def test_post_blank_token_rejected_and_nothing_written(client, tmp_path):
     """A blank API token is a 400; no config file is created."""
     response = client.post(
         "/config",
-        data={"org_id": "org-abc", "api_token": "   "},
+        data={"api_token": "   "},
     )
     assert response.status_code == 400
     assert b"required" in response.data
@@ -205,7 +209,7 @@ def test_post_bad_credentials_rejected_inline(tmp_path, monkeypatch):
 
     response = client.post(
         "/config",
-        data={"org_id": "org-abc", "api_token": "tok-wrong"},
+        data={"api_token": "tok-wrong"},
     )
     assert response.status_code == 400
     assert b"rejected" in response.data
@@ -229,19 +233,23 @@ def test_post_verify_network_failure_rejected_inline(tmp_path, monkeypatch):
 
     response = client.post(
         "/config",
-        data={"org_id": "org-abc", "api_token": "tok-xyz"},
+        data={"api_token": "tok-xyz"},
     )
     assert response.status_code == 400
     assert b"Could not reach" in response.data
     assert not (tmp_path / "config.json").exists()
 
 
-def test_setup_prefills_org_id_but_never_echoes_token(client, tmp_path):
-    """/setup pre-fills a stored org ID but never reveals the saved token."""
-    _write_creds_only(tmp_path, org_id="org-visible", api_token="tok-secret-9999")
+def test_setup_has_no_org_field_and_never_echoes_token(client, tmp_path):
+    """/setup shows no org-ID field (0.6.4+) and never reveals the token.
+
+    The stored config here carries a legacy org_id (pre-0.6.4 install);
+    it must neither render nor break the page."""
+    _write_creds_only(tmp_path, org_id="org-legacy", api_token="tok-secret-9999")
     response = client.get("/setup")
     assert response.status_code == 200
-    assert b"org-visible" in response.data
+    assert b"Organization ID" not in response.data
+    assert b"org-legacy" not in response.data
     assert b"tok-secret-9999" not in response.data
 
 
@@ -286,7 +294,7 @@ def test_setup_location_post_valid_saves_and_advances_to_dashboard(client, tmp_p
     saved = json.loads((tmp_path / "config.json").read_text(encoding="utf-8"))
     assert saved["fixed_lat"] == 40.712082
     assert saved["fixed_lon"] == -74.0409
-    # Credentials preserved across the merge.
+    # Legacy org_id key (pre-0.6.4 install) preserved across the merge.
     assert saved["org_id"] == "org-abc"
     # Restart sentinel touched so worker picks up the new mode.
     assert (tmp_path / ".restart_requested").exists()
@@ -332,7 +340,7 @@ def test_setup_location_post_non_numeric_is_error(client, tmp_path):
         data={"fixed_lat": "north", "fixed_lon": "west"},
     )
     assert response.status_code == 400
-    assert b"numeric" in response.data.lower()
+    assert b"decimal degrees" in response.data.lower()
 
 
 # --------------------------------------------------------------------------
@@ -566,7 +574,7 @@ def test_settings_location_post_one_blank_is_error(client, tmp_path):
 def test_settings_location_post_non_numeric_is_error(client, tmp_path):
     response = client.post("/settings/location", data={"fixed_lat": "north", "fixed_lon": "west"})
     assert response.status_code == 400
-    assert b"numeric" in response.data.lower()
+    assert b"decimal degrees" in response.data.lower()
 
 
 def test_settings_location_post_lat_out_of_range_is_error(client, tmp_path):
@@ -612,3 +620,234 @@ def test_advanced_post_redirects_to_settings_location(client, tmp_path):
                            follow_redirects=False)
     assert response.status_code == 308
     assert response.headers["Location"].endswith("/settings/location")
+
+
+# --------------------------------------------------------------------------
+# Coordinate paste formats (0.6.4)
+# --------------------------------------------------------------------------
+# The form hint tells operators to right-click in Google Maps and copy the
+# coordinates — which lands "40.712082, -74.040900" on the clipboard as ONE
+# string. Before 0.6.4 pasting that into a field bounced with "must be
+# numeric" on the majority setup path. These tests pin every real-world
+# paste format the parser now accepts.
+
+def _saved_coords(tmp_path):
+    cfg = json.loads((tmp_path / "config.json").read_text(encoding="utf-8"))
+    return cfg["fixed_lat"], cfg["fixed_lon"]
+
+
+def test_location_accepts_google_maps_pair_in_lat_field(client, tmp_path):
+    """The full 'lat, lon' pair pasted into latitude, longitude left blank."""
+    response = client.post(
+        "/settings/location",
+        data={"fixed_lat": "40.712082, -74.040900", "fixed_lon": ""},
+    )
+    assert response.status_code == 200
+    assert _saved_coords(tmp_path) == (40.712082, -74.0409)
+
+
+def test_setup_location_pair_paste_beats_prefilled_longitude(client, tmp_path):
+    """Pair pasted into latitude while longitude still holds the North-Pole
+    prefill ('0.0') — the pasted pair must win over the placeholder."""
+    _write_creds_only(tmp_path)
+    response = client.post(
+        "/setup/location",
+        data={"fixed_lat": "40.712082, -74.040900", "fixed_lon": "0.0"},
+    )
+    assert response.status_code == 302
+    assert _saved_coords(tmp_path) == (40.712082, -74.0409)
+
+
+def test_location_accepts_degree_symbol_and_hemisphere_letters(client, tmp_path):
+    """Wikipedia / Google Earth style: degree symbol + N/S/E/W letters.
+    W flips the longitude sign."""
+    response = client.post(
+        "/settings/location",
+        data={"fixed_lat": "40.7128° N", "fixed_lon": "74.0409° W"},
+    )
+    assert response.status_code == 200
+    assert _saved_coords(tmp_path) == (40.7128, -74.0409)
+
+
+def test_location_accepts_unicode_minus(client, tmp_path):
+    """Wikipedia renders negatives with U+2212, not ASCII '-'."""
+    response = client.post(
+        "/settings/location",
+        data={"fixed_lat": "40.7128", "fixed_lon": "−74.0409"},
+    )
+    assert response.status_code == 200
+    assert _saved_coords(tmp_path) == (40.7128, -74.0409)
+
+
+def test_location_accepts_eu_decimal_commas(client, tmp_path):
+    """'40,7128' with a filled other field is a decimal comma, NOT a pair."""
+    response = client.post(
+        "/settings/location",
+        data={"fixed_lat": "40,7128", "fixed_lon": "-74,0409"},
+    )
+    assert response.status_code == 200
+    assert _saved_coords(tmp_path) == (40.7128, -74.0409)
+
+
+def test_location_accepts_trailing_comma_from_hand_split_pair(client, tmp_path):
+    """Operator split the Google Maps pair by hand and left the comma."""
+    response = client.post(
+        "/settings/location",
+        data={"fixed_lat": "40.712082,", "fixed_lon": "-74.040900"},
+    )
+    assert response.status_code == 200
+    assert _saved_coords(tmp_path) == (40.712082, -74.0409)
+
+
+def test_location_still_rejects_dms_format(client, tmp_path):
+    """Degrees-minutes-seconds is not supported; the error shows the
+    decimal format to use instead."""
+    response = client.post(
+        "/settings/location",
+        data={"fixed_lat": "40°42'43\"N", "fixed_lon": "74°02'27\"W"},
+    )
+    assert response.status_code == 400
+    assert b"decimal degrees" in response.data.lower()
+    assert not (tmp_path / "config.json").exists()
+
+
+def test_location_rejects_zero_zero_pair_paste(client, tmp_path):
+    """(0, 0) pasted as a pair hits the same unset-tell rejection as
+    (0, 0) entered field by field."""
+    response = client.post(
+        "/settings/location",
+        data={"fixed_lat": "0.0, 0.0", "fixed_lon": ""},
+    )
+    assert response.status_code == 400
+    assert b"cannot both be zero" in response.data.lower()
+
+
+# --------------------------------------------------------------------------
+# Address geocoding (0.6.4)
+# --------------------------------------------------------------------------
+
+_GEOCODE_HIT = {
+    "lat": 40.748441,
+    "lon": -73.985664,
+    "display_name": "Empire State Building, 350, 5th Avenue, New York",
+}
+
+
+def _stub_geocode(monkeypatch, result=(True, None, _GEOCODE_HIT)):
+    calls = []
+
+    def fake(query, timeout=10):
+        calls.append(query)
+        return result
+
+    monkeypatch.setattr("ee_gateway_ui.app.geocode_address", fake)
+    return calls
+
+
+def test_settings_lookup_fills_fields_without_saving(client, tmp_path, monkeypatch):
+    """The 'Find coordinates' submit geocodes and re-renders for review;
+    nothing is persisted and the worker is not restarted."""
+    calls = _stub_geocode(monkeypatch)
+    response = client.post(
+        "/settings/location",
+        data={"action": "lookup", "address": "350 5th Ave, New York",
+              "fixed_lat": "", "fixed_lon": ""},
+    )
+    assert response.status_code == 200
+    assert calls == ["350 5th Ave, New York"]
+    assert b"40.748441" in response.data
+    assert b"-73.985664" in response.data
+    assert b"Empire State Building" in response.data
+    assert not (tmp_path / "config.json").exists()
+    assert not (tmp_path / ".restart_requested").exists()
+
+
+def test_settings_lookup_failure_shows_error_and_manual_path(client, tmp_path, monkeypatch):
+    _stub_geocode(
+        monkeypatch,
+        result=(False, "No match for that address. Add a city or country and "
+                       "try again. You can also enter the coordinates manually "
+                       "below.", None),
+    )
+    response = client.post(
+        "/settings/location",
+        data={"action": "lookup", "address": "asdfghjkl",
+              "fixed_lat": "", "fixed_lon": ""},
+    )
+    assert response.status_code == 400
+    assert b"No match" in response.data
+    assert b"manually" in response.data
+    assert not (tmp_path / "config.json").exists()
+
+
+def test_setup_lookup_then_save_flow(client, tmp_path, monkeypatch):
+    """Setup step 2: lookup fills the fields, the follow-up save persists
+    them and advances to the dashboard."""
+    _write_creds_only(tmp_path)
+    _stub_geocode(monkeypatch)
+    lookup = client.post(
+        "/setup/location",
+        data={"action": "lookup", "address": "350 5th Ave, New York",
+              "fixed_lat": "90.0", "fixed_lon": "0.0"},
+    )
+    assert lookup.status_code == 200
+    assert b"40.748441" in lookup.data
+
+    save = client.post(
+        "/setup/location",
+        data={"fixed_lat": "40.748441", "fixed_lon": "-73.985664"},
+    )
+    assert save.status_code == 302
+    assert _saved_coords(tmp_path) == (40.748441, -73.985664)
+    assert (tmp_path / ".restart_requested").exists()
+
+
+def test_geocode_address_parses_nominatim_response(monkeypatch):
+    """Unit test against a canned Nominatim payload (no network)."""
+    from ee_gateway_ui import app as app_module
+
+    class FakeResponse:
+        def __init__(self, body):
+            self._body = body
+        def read(self):
+            return self._body
+        def __enter__(self):
+            return self
+        def __exit__(self, *args):
+            return False
+
+    body = json.dumps([{
+        "lat": "40.748441", "lon": "-73.985664",
+        "display_name": "Empire State Building, New York",
+    }]).encode("utf-8")
+    monkeypatch.setattr(
+        app_module.urllib.request, "urlopen",
+        lambda req, timeout=10: FakeResponse(body),
+    )
+    ok, err, hit = app_module.geocode_address("empire state building")
+    assert ok and err is None
+    assert hit == {"lat": 40.748441, "lon": -73.985664,
+                   "display_name": "Empire State Building, New York"}
+
+
+def test_geocode_address_no_match_and_blank_query(monkeypatch):
+    from ee_gateway_ui import app as app_module
+
+    ok, err, hit = app_module.geocode_address("   ")
+    assert not ok and hit is None
+
+    class FakeResponse:
+        def read(self):
+            return b"[]"
+        def __enter__(self):
+            return self
+        def __exit__(self, *args):
+            return False
+
+    monkeypatch.setattr(
+        app_module.urllib.request, "urlopen",
+        lambda req, timeout=10: FakeResponse(),
+    )
+    ok, err, hit = app_module.geocode_address("nowhere at all")
+    assert not ok and hit is None
+    assert "No match" in err

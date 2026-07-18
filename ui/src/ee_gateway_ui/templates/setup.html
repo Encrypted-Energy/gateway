@@ -10,8 +10,8 @@
       <span class="eyebrow">{% if configured %}Reconfigure{% else %}Step 1 of 2{% endif %}</span>
       <h1 class="card-title">Connect to Encrypted Energy</h1>
       <p class="card-sub">
-        Paste your org ID and API token from the gateway page on
-        encryptedenergy.com. We'll check the token, then ask where the
+        Paste your API token from the gateway page on
+        encryptedenergy.com. We'll check it, then ask where the
         gateway is.
       </p>
     </div>
@@ -22,13 +22,6 @@
   {% endif %}
 
   <form class="form" method="post" action="{{ url_for('save_config') }}" autocomplete="off">
-    <label class="field">
-      <span class="field-label">Organization ID</span>
-      <input class="field-input" type="text" name="org_id" value="{{ org_id }}"
-             placeholder="ee_org_xxxxxxxxxxxxxxxxxxxxxx" spellcheck="false"
-             autocomplete="off" required>
-    </label>
-
     <label class="field">
       <span class="field-label">API token</span>
       <input class="field-input" type="password" name="api_token"
