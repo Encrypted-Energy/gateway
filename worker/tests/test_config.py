@@ -68,9 +68,19 @@ def test_empty_env_var_does_not_override_file(tmp_path, monkeypatch):
     assert cfg.org_id == "org-file"
 
 
-def test_missing_both_credentials_raises(tmp_path):
-    with pytest.raises(ConfigError, match="org_id"):
+def test_missing_credentials_raises_about_token_only(tmp_path):
+    # org_id is optional from 0.7.7 (nothing ever consumed it); only the
+    # api_token is required, so it is the only thing the error names.
+    with pytest.raises(ConfigError, match="api_token"):
         config.load(tmp_path / "absent.json")
+
+
+def test_token_only_config_loads_without_org_id(tmp_path):
+    """A 0.6.4+ UI writes no org_id at all; the worker must accept that."""
+    cfgfile = _write(tmp_path / "config.json", {"api_token": "tok-1"})
+    cfg = config.load(cfgfile)
+    assert cfg.api_token == "tok-1"
+    assert cfg.org_id == ""
 
 
 def test_missing_token_raises_and_names_it(tmp_path):
@@ -149,3 +159,19 @@ def test_json_array_instead_of_object_is_ignored(tmp_path, monkeypatch):
     monkeypatch.setenv("HUBBLE_ORG_ID", "o")
     monkeypatch.setenv("HUBBLE_API_TOKEN", "t")
     assert config.load(weird).org_id == "o"
+
+
+def test_version_metadata_in_sync():
+    """pyproject.toml and __init__.py __version__ must agree. This drift
+    shipped three releases in a row (pyproject 0.7.4 under a 0.7.6
+    worker) before 0.10.6 re-synced them; this test makes the next
+    drift a test failure instead of a release-notes archaeology item."""
+    import tomllib
+    from pathlib import Path
+
+    import ee_gateway_worker
+
+    pyproject = Path(__file__).resolve().parents[1] / "pyproject.toml"
+    with open(pyproject, "rb") as fh:
+        declared = tomllib.load(fh)["project"]["version"]
+    assert declared == ee_gateway_worker.__version__

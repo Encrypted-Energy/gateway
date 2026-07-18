@@ -34,15 +34,19 @@ always renders something sensible.
 
 import json
 import os
+import re
 import sqlite3
 import tempfile
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from datetime import datetime
 from pathlib import Path
 
 from flask import Flask, redirect, render_template, request, url_for
+
+from ee_gateway_ui import __version__
 
 DEFAULT_DATA_DIR = "/data"
 DEFAULT_PORT = 8080
@@ -129,20 +133,22 @@ def _read_json(path):
 
 
 def read_config(data_dir):
-    """Return stored Hubble credentials, or ``None`` if not configured.
+    """Return stored credentials, or ``None`` if not configured.
 
-    Only a config carrying a non-empty ``org_id`` and ``api_token`` counts as
-    configured. A missing file, malformed JSON, or blank fields all read as
-    'not configured', so the UI falls back to the setup wizard.
+    A non-empty ``api_token`` is the only thing that counts as configured.
+    From 0.6.4 the org ID is gone from setup: the ``ee_live`` token alone
+    authenticates against ee-web (a legacy ``org_id`` key left in an older
+    install's config.json is preserved on disk but ignored here). A missing
+    file, malformed JSON, or a blank token all read as 'not configured', so
+    the UI falls back to the setup wizard.
     """
     raw = _read_json(_config_path(data_dir))
     if not isinstance(raw, dict):
         return None
-    org_id = str(raw.get("org_id") or "").strip()
     api_token = str(raw.get("api_token") or "").strip()
-    if not org_id or not api_token:
+    if not api_token:
         return None
-    return {"org_id": org_id, "api_token": api_token}
+    return {"api_token": api_token}
 
 
 def read_state(data_dir):
@@ -190,20 +196,22 @@ def read_devices(data_dir):
 # Write
 # --------------------------------------------------------------------------
 
-def write_config(data_dir, org_id, api_token):
+def write_config(data_dir, api_token):
     """Update credentials in ``config.json`` atomically, preserving other keys.
 
     From 0.5.0 the UI writes additional fields to this file (fixed_lat /
     fixed_lon for the location override). Saving credentials must NOT
     clobber those, so we read-merge-write rather than overwrite. The
-    worker supplies its own defaults for any key the file omits.
+    worker supplies its own defaults for any key the file omits. A legacy
+    ``org_id`` key from a pre-0.6.4 install survives the merge untouched;
+    nothing reads it anymore, but wiping it would be gratuitous churn on
+    a file the worker re-reads every cycle.
 
     The dashboard reads ``saved_at`` to show an optimistic "Verifying
     credentials" state for a short window after submission, masking the
     natural lag between this write and the worker's next scan cycle.
     """
     _merge_config(data_dir, {
-        "org_id": org_id,
         "api_token": api_token,
         "saved_at": int(time.time()),
     })
@@ -320,7 +328,7 @@ def verify_credentials(base_url, api_token, timeout=VERIFY_TIMEOUT_SECONDS):
         headers={
             "Authorization": f"Bearer {api_token}",
             "Accept": "application/json",
-            "User-Agent": "ee-gateway-ui",
+            "User-Agent": f"ee-gateway-ui/{__version__} (https://encryptedenergy.com)",
         },
         method="GET",
     )
@@ -357,6 +365,88 @@ def verify_credentials(base_url, api_token, timeout=VERIFY_TIMEOUT_SECONDS):
         ), None
     except Exception as exc:  # pragma: no cover — defense in depth
         return False, f"Verification failed unexpectedly: {exc}", None
+
+
+# --------------------------------------------------------------------------
+# Address geocoding (0.6.4+)
+# --------------------------------------------------------------------------
+
+# OpenStreetMap's public Nominatim instance. No API key; the usage policy
+# (operations.osmfoundation.org/policies/nominatim) asks for a descriptive
+# User-Agent and at most 1 request/second. We call it only when an operator
+# clicks "Find coordinates" on a location form — a handful of requests per
+# gateway *lifetime* — which is comfortably inside the policy.
+NOMINATIM_URL = "https://nominatim.openstreetmap.org/search"
+GEOCODE_TIMEOUT_SECONDS = 10
+
+
+def geocode_address(query, timeout=GEOCODE_TIMEOUT_SECONDS):
+    """Resolve a street address / place name to coordinates via Nominatim.
+
+    Returns ``(ok, error_message, result)``:
+
+    * ``(True, None, dict)`` — best match, with ``lat`` / ``lon`` floats and
+      the matched ``display_name`` so the operator can sanity-check what we
+      found before saving.
+    * ``(False, error_message, None)`` — lookup failed; the message is
+      user-facing and always ends with a path forward (manual entry still
+      works).
+
+    Designed to never raise — geocoding is a convenience layer on top of
+    manual coordinate entry, so any failure must degrade to the manual
+    path, not block setup. Module-level so tests can monkeypatch it (same
+    pattern as verify_credentials).
+    """
+    q = (query or "").strip()
+    if not q:
+        return False, "Enter an address or place name to look up.", None
+    url = NOMINATIM_URL + "?" + urllib.parse.urlencode(
+        {"q": q, "format": "jsonv2", "limit": 1}
+    )
+    req = urllib.request.Request(
+        url,
+        headers={
+            "User-Agent": f"ee-gateway-ui/{__version__} (https://encryptedenergy.com)",
+            "Accept": "application/json",
+        },
+        method="GET",
+    )
+    manual_hint = "You can also enter the coordinates manually below."
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            body = resp.read()
+        results = json.loads(body.decode("utf-8"))
+        if not isinstance(results, list):
+            return False, f"The address lookup returned an unexpected response. {manual_hint}", None
+        if not results:
+            return False, (
+                "No match for that address. Add a city or country and try "
+                f"again. {manual_hint}"
+            ), None
+        best = results[0]
+        lat, lon = float(best["lat"]), float(best["lon"])
+        # Trust but verify: a malformed or hostile response must not put
+        # nan/inf/out-of-range values into the form with a green
+        # "Matched" banner. (nan fails every comparison, so it lands in
+        # the unexpected-response path too.)
+        if not (-90.0 <= lat <= 90.0 and -180.0 <= lon <= 180.0):
+            return False, f"The address lookup returned an unexpected response. {manual_hint}", None
+        return True, None, {
+            "lat": lat,
+            "lon": lon,
+            "display_name": str(best.get("display_name") or q),
+        }
+    except (KeyError, TypeError, ValueError):
+        return False, f"The address lookup returned an unexpected response. {manual_hint}", None
+    except urllib.error.HTTPError as exc:
+        return False, f"The address lookup failed (HTTP {exc.code}). {manual_hint}", None
+    except (urllib.error.URLError, TimeoutError, OSError):
+        return False, (
+            "Could not reach the address lookup service. Check the "
+            f"gateway's internet connection, or retry. {manual_hint}"
+        ), None
+    except Exception:  # pragma: no cover — defense in depth
+        return False, f"The address lookup failed unexpectedly. {manual_hint}", None
 
 
 # --------------------------------------------------------------------------
@@ -538,9 +628,7 @@ def create_app(data_dir=None):
         """
         config = read_config(data_dir)
         if config is None:
-            return render_template(
-                "setup.html", org_id="", error=None, configured=False
-            )
+            return render_template("setup.html", error=None, configured=False)
         fixed_lat, fixed_lon = read_advanced_config(data_dir)
         if fixed_lat is None or fixed_lon is None:
             return render_template(
@@ -571,16 +659,13 @@ def create_app(data_dir=None):
     def setup():
         """Show the credentials form, even when already configured.
 
-        The organization ID is pre-filled when a config exists; the API token
-        field is always left blank and never echoed back — the stored secret
-        is write-only from the UI's point of view.
+        The API token field is always left blank and never echoed back —
+        the stored secret is write-only from the UI's point of view.
         """
-        config = read_config(data_dir)
         return render_template(
             "setup.html",
-            org_id=config["org_id"] if config else "",
             error=None,
-            configured=config is not None,
+            configured=read_config(data_dir) is not None,
         )
 
     @app.route("/restart", methods=["POST"])
@@ -617,14 +702,12 @@ def create_app(data_dir=None):
         a location is already configured (the reconfigure path), in which
         case we skip directly to the dashboard.
         """
-        org_id = (request.form.get("org_id") or "").strip()
         api_token = (request.form.get("api_token") or "").strip()
-        if not org_id or not api_token:
+        if not api_token:
             return (
                 render_template(
                     "setup.html",
-                    org_id=org_id,
-                    error="Both the organization ID and API token are required.",
+                    error="The API token is required.",
                     configured=read_config(data_dir) is not None,
                 ),
                 400,
@@ -636,14 +719,13 @@ def create_app(data_dir=None):
             return (
                 render_template(
                     "setup.html",
-                    org_id=org_id,
                     error=error,
                     configured=read_config(data_dir) is not None,
                 ),
                 400,
             )
 
-        write_config(data_dir, org_id, api_token)
+        write_config(data_dir, api_token)
         # Reconfigure path: location was already set, jump to dashboard.
         # First-time setup: continue to step 2 (location).
         if is_setup_complete(data_dir):
@@ -679,6 +761,35 @@ def create_app(data_dir=None):
         """
         if read_config(data_dir) is None:
             return redirect(url_for("setup"))
+
+        # "Find coordinates" submit: geocode the address and re-render the
+        # page with the coordinate fields filled in for review. Nothing is
+        # saved until the operator confirms with the save submit. The
+        # lookup lives in its own <form> (see the template comment), so
+        # this POST carries only the address — on failure the coordinate
+        # fields re-render with their setup defaults.
+        if request.form.get("action") == "lookup":
+            address = (request.form.get("address") or "").strip()
+            ok, err, hit = geocode_address(address)
+            if not ok:
+                return (
+                    render_template(
+                        "setup_location.html",
+                        fixed_lat="",
+                        fixed_lon="",
+                        address=address,
+                        error=err,
+                    ),
+                    400,
+                )
+            return render_template(
+                "setup_location.html",
+                fixed_lat=hit["lat"],
+                fixed_lon=hit["lon"],
+                address=address,
+                geocoded=hit["display_name"],
+                error=None,
+            )
 
         raw_lat = (request.form.get("fixed_lat") or "").strip()
         raw_lon = (request.form.get("fixed_lon") or "").strip()
@@ -726,6 +837,36 @@ def create_app(data_dir=None):
         On success, the worker is asked to restart so the new GpsClient
         picks up the change on next boot.
         """
+        # "Find coordinates" submit — same review-then-save flow as setup
+        # step 2; see save_setup_location. On failure the coordinate
+        # fields re-render with the currently saved location, since the
+        # standalone lookup form doesn't carry them.
+        if request.form.get("action") == "lookup":
+            address = (request.form.get("address") or "").strip()
+            ok, err, hit = geocode_address(address)
+            if not ok:
+                cur_lat, cur_lon = read_advanced_config(data_dir)
+                return (
+                    render_template(
+                        "settings_location.html",
+                        fixed_lat="" if cur_lat is None else cur_lat,
+                        fixed_lon="" if cur_lon is None else cur_lon,
+                        address=address,
+                        error=err,
+                        saved=False,
+                    ),
+                    400,
+                )
+            return render_template(
+                "settings_location.html",
+                fixed_lat=hit["lat"],
+                fixed_lon=hit["lon"],
+                address=address,
+                geocoded=hit["display_name"],
+                error=None,
+                saved=False,
+            )
+
         raw_lat = (request.form.get("fixed_lat") or "").strip()
         raw_lon = (request.form.get("fixed_lon") or "").strip()
 
@@ -740,7 +881,9 @@ def create_app(data_dir=None):
                 saved=True,
             )
 
-        ok, err, lat, lon = _parse_coords(raw_lat, raw_lon, allow_blank=False)
+        # allow_blank=True: this page HAS a clear path (both fields
+        # blank, handled above), so a one-blank error must mention it.
+        ok, err, lat, lon = _parse_coords(raw_lat, raw_lon, allow_blank=True)
         if not ok:
             return (
                 render_template(
@@ -774,6 +917,114 @@ def create_app(data_dir=None):
     return app
 
 
+# Characters that arrive in real-world coordinate pastes. The dash
+# entries are load-bearing (float() rejects them); the space entries are
+# defense in depth only — Python's float(), str.strip(), and re's \s all
+# already treat these Unicode spaces as whitespace — kept so the
+# normalized string is plain ASCII regardless of paste source.
+_COORD_CHAR_MAP = str.maketrans({
+    "−": "-",   # Unicode minus (Wikipedia, some GPS apps)
+    "–": "-",   # en dash, occasionally substituted by rich-text editors
+    " ": " ",   # no-break space
+    " ": " ",   # narrow no-break space (used inside Wikipedia coords)
+    " ": " ",   # thin space
+})
+
+
+def _clean_coord(raw):
+    """Normalize one pasted coordinate fragment; return float or ``None``.
+
+    Accepts the formats operators actually paste: plain decimals, degree
+    symbols ("40.7128°", "40.7128°N"), hemisphere letters separated by a
+    space or degree mark ("40.7128° N", "40.7128 N" — S and W flip the
+    sign), Unicode minus, EU decimal commas ("40,7128"), and stray
+    separators left behind when a pair is split by hand ("40.7128,").
+
+    A hemisphere letter must be separated from the number by whitespace
+    or a degree symbol: "-74.0409e" is a typo, not "74.0409 East", and
+    must fail parsing rather than silently flip the typed sign.
+
+    Degrees-minutes-seconds is NOT handled; that failure falls through to
+    the form error, which shows the decimal format to use.
+    """
+    # Degree marks become spaces FIRST so "40.7128°N" reads as a
+    # separated hemisphere letter below.
+    s = str(raw).translate(_COORD_CHAR_MAP).replace("°", " ").strip().strip(",;")
+    # Hemisphere letter, prefix or suffix, whitespace-separated. The
+    # letter dictates the sign (S/W negative), overriding any typed sign.
+    sign = None
+    match = re.match(r"(?i)^([NSEW])\s+(.+)$", s)
+    if match is None:
+        match = re.match(r"(?i)^(.+?)\s+([NSEW])$", s)
+        if match is not None:
+            s, sign = match.group(1), match.group(2)
+    else:
+        sign, s = match.group(1), match.group(2)
+    s = s.strip().strip(",;")
+    # EU decimal comma: exactly one comma and no dot means "40,7128" is a
+    # decimal, not a pair. Pair splitting happens in _try_parse_pair
+    # BEFORE this function runs; its per-token gate (every token must
+    # carry a dot, degree mark, or hemisphere letter) is what keeps bare
+    # integers like "40,7" out of the pair path — keep the rules in sync.
+    if s.count(",") == 1 and "." not in s:
+        s = s.replace(",", ".")
+    try:
+        value = float(s)
+    except ValueError:
+        return None
+    if sign is not None and sign.upper() in ("S", "W"):
+        value = -abs(value)
+    elif sign is not None:
+        value = abs(value)
+    return value
+
+
+# A pair token must LOOK like a real decimal coordinate — carry a decimal
+# dot, a degree mark, or a standalone hemisphere letter — before we are
+# willing to split one field into two values. Without this gate, inputs
+# like "74 2" or "51 28" (degrees-and-minutes typed with a space) or
+# "40, 71" (EU decimal comma with a space) would silently become a full
+# (lat, lon) pair, discarding whatever the operator typed in the other
+# field — a silent wrong-location save, strictly worse than an error.
+def _looks_like_decimal_coord(part):
+    p = part.strip()
+    return "." in p or "°" in p or bool(re.search(r"(?i)(^|\s|°)[NSEW](\s|°|$)", p))
+
+
+def _try_parse_pair(raw):
+    """Return ``(lat, lon)`` if ``raw`` reads as one pasted 'lat, lon' pair.
+
+    Google Maps' right-click copy — the exact flow our own form hint
+    recommends — puts "40.712082, -74.040900" on the clipboard as a single
+    string, which operators paste into a single field. Before 0.6.4 that
+    hit the float() parser and bounced with "must be numeric" — on the
+    majority setup path.
+
+    Both tokens must individually look like decimal coordinates (see
+    _looks_like_decimal_coord). Ambiguous inputs — "40,7" (EU decimal),
+    "51 28" (degrees-and-minutes), "40, 71" — are never split; they
+    either parse as a single value or produce an explicit error, because
+    a wrong guess here silently saves a wrong location.
+    """
+    s = str(raw or "").translate(_COORD_CHAR_MAP).strip().strip(";,")
+    if "," in s or ";" in s:
+        parts = [p for p in re.split(r"[;,]", s) if p.strip()]
+    else:
+        parts = s.split()
+    if len(parts) != 2:
+        return None
+    if not all(_looks_like_decimal_coord(p) for p in parts):
+        return None
+    lat, lon = _clean_coord(parts[0]), _clean_coord(parts[1])
+    if lat is None or lon is None:
+        return None
+    # No range check here: _parse_coords owns validation, so an
+    # out-of-range pair paste like "95.0, 10.0" gets the accurate
+    # "Latitude must be between -90 and 90" message instead of falling
+    # through to the single-field path and a misleading error.
+    return lat, lon
+
+
 def _parse_coords(raw_lat, raw_lon, *, allow_blank):
     """Shared validation for the two location-form handlers.
 
@@ -784,21 +1035,28 @@ def _parse_coords(raw_lat, raw_lon, *, allow_blank):
     ``allow_blank``: when True (settings page), both fields blank is a
     valid "clear" — but callers handle that path BEFORE calling here.
     When False (setup step 2), blanks are an error. Either way, one
-    blank and one non-blank is always an error.
+    blank and one non-blank is always an error (unless one field holds a
+    full pasted pair, which wins over whatever is in the other field —
+    including the form's own pre-filled placeholder).
     """
-    if not raw_lat or not raw_lon:
-        if allow_blank:
-            err = "Both latitude and longitude are required, or clear both to disable."
-        else:
-            err = "Both latitude and longitude are required."
-        return False, err, None, None
-    try:
-        lat = float(raw_lat)
-        lon = float(raw_lon)
-    except ValueError:
-        return False, (
-            "Latitude and longitude must be numeric (e.g. 40.712082, -74.040900)."
-        ), None, None
+    pair = _try_parse_pair(raw_lat) or _try_parse_pair(raw_lon)
+    if pair is not None:
+        lat, lon = pair
+    else:
+        if not raw_lat or not raw_lon:
+            if allow_blank:
+                err = "Both latitude and longitude are required, or clear both to disable."
+            else:
+                err = "Both latitude and longitude are required."
+            return False, err, None, None
+        lat = _clean_coord(raw_lat)
+        lon = _clean_coord(raw_lon)
+        if lat is None or lon is None:
+            return False, (
+                "Latitude and longitude must be decimal degrees (e.g. "
+                "40.712082 and -74.040900). Pasting the full pair from "
+                "Google Maps into either field works too."
+            ), None, None
     if not -90.0 <= lat <= 90.0:
         return False, "Latitude must be between -90 and 90.", None, None
     if not -180.0 <= lon <= 180.0:

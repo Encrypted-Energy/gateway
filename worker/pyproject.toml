@@ -1,6 +1,6 @@
 [project]
 name = "ee-gateway-worker"
-version = "0.7.4"
+version = "0.7.7"
 description = "EE Gateway worker — scans Hubble BLE packets and ingests them to the Hubble cloud."
 requires-python = ">=3.11"
 license = { text = "GPL-3.0-only" }
