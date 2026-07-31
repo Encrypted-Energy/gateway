@@ -13,21 +13,18 @@
 
 """Gateway configuration.
 
-A :class:`Config` carries everything the worker needs to run: the API
+A :class:`Config` carries everything the worker needs to run: the EE API
 token and the scan-loop timings.
 
 Values come from three sources, highest priority first:
 
 1. environment variables (``EE_API_TOKEN``, ``EE_SCAN_INTERVAL``,
-   ``EE_SCAN_TIMEOUT``, plus legacy ``HUBBLE_*`` aliases);
+   ``EE_SCAN_TIMEOUT``);
 2. the JSON file the UI container writes (``config.json``);
 3. built-in defaults.
 
-The API token is the one required credential — it must come from the env
-or the file, or loading fails. ``org_id`` is a legacy field (pre-0.7.7):
-still read from env/file into :class:`Config` for back-compat, never
-required, never consumed. The two timing values have defaults and a
-range check.
+The API token has no default — it must come from the env or the file, or
+loading fails. The two timing values have defaults and a range check.
 
 The worker reloads this configuration every scan cycle, so a save from the UI
 takes effect within one cycle. A malformed or half-written file (the UI caught
@@ -66,14 +63,15 @@ class ConfigError(Exception):
 
 @dataclass(frozen=True)
 class Config:
-    """A validated, immutable gateway configuration."""
+    """A validated, immutable gateway configuration.
+
+    ``org_id`` was removed in worker 0.8.0: EE resolves the organization
+    server-side from the bearer token, so the field was collected but never
+    transmitted. Old ``config.json`` files that still contain it are
+    tolerated — the key is simply ignored on load.
+    """
 
     api_token: str
-    # Legacy field (pre-0.7.7). Nothing consumes it — auth is the ee_live
-    # token alone — but installs configured before the org-ID field was
-    # removed from the UI still carry it in config.json, so it is read
-    # and kept for forward-compat rather than treated as an error.
-    org_id: str = ""
     scan_interval: int = DEFAULT_SCAN_INTERVAL
     scan_timeout: int = DEFAULT_SCAN_TIMEOUT
     ee_base_url: str = DEFAULT_EE_BASE_URL
@@ -125,22 +123,14 @@ def load(config_path: str | Path) -> Config:
             return file_data[file_key]
         return default
 
-    # EE_* are the canonical env var names from 0.4.0 onward. HUBBLE_* still
-    # work for back-compat with installs created before the pivot. Env value
-    # wins over file value; either canonical or legacy env name is accepted.
-    org_id = (
-        os.environ.get("EE_ORG_ID")
-        or os.environ.get("HUBBLE_ORG_ID")
-        or file_data.get("org_id")
-    )
-    api_token = (
-        os.environ.get("EE_API_TOKEN")
-        or os.environ.get("HUBBLE_API_TOKEN")
-        or file_data.get("api_token")
-    )
-    # Only the API token is required (0.7.7+). org_id used to be required
-    # here, but it was never consumed anywhere — the ee_live token alone
-    # authenticates against ee-web — and the UI no longer collects it.
+    # The bearer token is the only credential: EE resolves the organization
+    # from it server-side. (org_id was required until worker 0.8.0 but never
+    # sent anywhere; a leftover org_id key in config.json is ignored. The
+    # legacy HUBBLE_API_TOKEN env alias was dropped in 0.8.0 too: every
+    # real install post-dates the 0.4.0 rename, gets its token from
+    # config.json via the setup wizard, and the token is an ee_live EE
+    # credential, not a Hubble one.)
+    api_token = os.environ.get("EE_API_TOKEN") or file_data.get("api_token")
     if not api_token:
         raise ConfigError("missing required credential(s): api_token (EE_API_TOKEN)")
 
@@ -196,7 +186,6 @@ def load(config_path: str | Path) -> Config:
         fixed_lon = None
 
     return Config(
-        org_id=str(org_id or ""),
         api_token=str(api_token),
         scan_interval=scan_interval,
         scan_timeout=scan_timeout,

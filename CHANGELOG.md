@@ -3,9 +3,37 @@
 All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [0.10.7] - 2026-07-31
 
-Nothing yet.
+### Changed
+- Worker: legacy HUBBLE_API_TOKEN env alias removed; EE_API_TOKEN (or the
+  config.json written by the setup wizard) is the only way to supply the
+  token. The alias predated the 0.4.0 rename and no real install uses it —
+  Umbrel installs never pass credentials via env, and the token is an
+  ee_live EE credential, not a Hubble one.
+- Worker: org_id removed from Config entirely (field, env resolution, and
+  constructor). EE resolves the organization server-side from the bearer
+  token, so the value was collected but never transmitted; 0.10.6 had
+  already made it optional, this finishes the removal. A leftover org_id
+  key in an old config.json is ignored on load.
+- Worker 0.8.0: batch ingest. The ingest loop now drains up to 500 pending
+  packets and sends them to EE in a single request (was one HTTP call per
+  packet), matching EE's per-request cap. EE forwards the batch to Hubble in
+  one upstream call and dedupes an identical resend, so a retry after a lost
+  response is safe. The whole batch is marked done / kept pending / dropped as
+  a unit via new batch DB helpers (one commit per batch instead of one per
+  packet). Cuts worker→EE request volume, Hubble rate-limit pressure, and
+  SD-card fsyncs by up to 500x. Also folds in the earlier 0.7.x fix that
+  retries 408/429 instead of dropping packets.
+- Worker: each packet now reports position_at (when its GPS fix was
+  captured, unix seconds) and accuracy_m (horizontal accuracy from the
+  dongle's gpsd eph, when reported) alongside the coordinates. EE forwards
+  both upstream so a fix's true age and precision are visible instead of
+  defaulting to heard-time and a constant 10 m (2026-07-31 stale-location
+  incident, fleet-wide close-out). Fix TTL tightened from 30 s to 25 s so
+  every stamped fix sits inside the upstream ±30 s location-timestamp
+  integrity filter. Packets queued by older workers upload unchanged with
+  the legacy server-side fallback.
 
 ## [0.10.6] - 2026-07-18
 

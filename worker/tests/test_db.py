@@ -80,6 +80,44 @@ def test_mark_ingest_error_keeps_packet_pending(tmp_path):
     assert [p["id"] for p in db.pending_packets(conn)] == [pid]
 
 
+def test_mark_ingested_many_clears_whole_batch(tmp_path):
+    conn = _conn(tmp_path)
+    ids = [db.insert_packet(conn, raw=str(i)) for i in range(4)]
+    db.mark_ingest_error(conn, ids[0], "prior error")  # should be cleared
+    db.mark_ingested_many(conn, ids)
+    rows = conn.execute("SELECT ingested, ingest_error FROM packet_log").fetchall()
+    assert all(r["ingested"] == 1 and r["ingest_error"] is None for r in rows)
+    assert db.pending_packets(conn) == []
+
+
+def test_mark_ingest_error_many_keeps_batch_pending(tmp_path):
+    conn = _conn(tmp_path)
+    ids = [db.insert_packet(conn, raw=str(i)) for i in range(3)]
+    db.mark_ingest_error_many(conn, ids, "hubble down")
+    rows = conn.execute("SELECT ingested, ingest_error FROM packet_log").fetchall()
+    assert all(r["ingested"] == 0 and r["ingest_error"] == "hubble down" for r in rows)
+    assert [p["id"] for p in db.pending_packets(conn)] == ids
+
+
+def test_mark_skipped_many_drops_whole_batch(tmp_path):
+    conn = _conn(tmp_path)
+    ids = [db.insert_packet(conn, raw=str(i)) for i in range(3)]
+    db.mark_skipped_many(conn, ids, "token revoked")
+    rows = conn.execute("SELECT ingested, ingest_error FROM packet_log").fetchall()
+    assert all(r["ingested"] == 1 and r["ingest_error"] == "token revoked" for r in rows)
+    assert db.pending_packets(conn) == []
+
+
+def test_batch_mark_helpers_are_noops_on_empty_list(tmp_path):
+    conn = _conn(tmp_path)
+    pid = db.insert_packet(conn, raw="x")
+    db.mark_ingested_many(conn, [])
+    db.mark_ingest_error_many(conn, [], "e")
+    db.mark_skipped_many(conn, [], "r")
+    # The one real row is untouched and still pending.
+    assert [p["id"] for p in db.pending_packets(conn)] == [pid]
+
+
 def test_stats_counts_total_ingested_pending_and_devices(tmp_path):
     conn = _conn(tmp_path)
     first = db.insert_packet(conn, raw="1", eid="dev-a")
