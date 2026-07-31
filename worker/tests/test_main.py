@@ -106,6 +106,33 @@ def test_rebuild_for_ee_roundtrips_payload_rssi_and_gps_fix():
     # forwards these to Hubble.
     assert rebuilt["latitude"] == _FIX.lat
     assert rebuilt["longitude"] == _FIX.lon
+    # Fix capture time rides along (0.8.0) so a packet uploaded later still
+    # reports when its coordinate was actually captured.
+    assert rebuilt["position_at"] == int(_FIX.at)
+
+
+def test_rebuild_for_ee_passes_accuracy_through():
+    fix = GpsFix(lat=40.7128, lon=-74.0060, at=1700000000.0, accuracy_m=6.5)
+    pkt = EncryptedPacket(
+        timestamp=1700000000, location=_LOC, payload=b"\x01", rssi=-40, eid=0xABCD
+    )
+    rebuilt = main._rebuild_for_ee(main._flatten(pkt, fix=fix)["raw"])
+    assert rebuilt is not None
+    assert rebuilt["accuracy_m"] == 6.5
+    assert rebuilt["position_at"] == 1700000000
+
+
+def test_rebuild_for_ee_legacy_row_has_no_position_at():
+    # Rows stored by a pre-0.8.0 worker carry coords but no fix metadata;
+    # both keys must come back None so wire_packet omits them from the body.
+    legacy_raw = json.dumps(
+        {"payload_b64": "AA==", "rssi": -50, "timestamp": 1700000000,
+         "latitude": 40.7, "longitude": -74.0, "eid": "abcd"}
+    )
+    rebuilt = main._rebuild_for_ee(legacy_raw)
+    assert rebuilt is not None
+    assert rebuilt["position_at"] is None
+    assert rebuilt["accuracy_m"] is None
 
 
 def test_rebuild_for_ee_handles_empty_payload():

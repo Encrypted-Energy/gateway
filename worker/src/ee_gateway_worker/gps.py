@@ -48,9 +48,13 @@ from typing import Optional
 log = logging.getLogger("ee_gateway_worker.gps")
 
 # A fix older than this is considered stale; status downgrades to "no_fix"
-# even though the dongle is still connected. 30s is generous for a dongle
-# that nominally emits TPV every second.
-GPS_FIX_TTL_SECONDS = 30
+# and current_fix() stops returning it, so packets are dropped rather than
+# stamped with an old coordinate. 25s keeps every stamped fix safely inside
+# Hubble's server-side integrity filter, which rejects packets whose
+# location timestamp is more than ±30s from detection time (2026-07-31
+# stale-location incident). A dongle nominally emits TPV every second, so
+# this only trips when the dongle actually loses its fix.
+GPS_FIX_TTL_SECONDS = 25
 
 # Wait this long between reconnect attempts when gpsd is unreachable. Short
 # enough that an operator who just started gpsd sees the status flip
@@ -68,6 +72,10 @@ class GpsFix:
     lat: float
     lon: float
     at: float  # unix epoch seconds when gpsd reported the fix
+    # Estimated horizontal position error in meters (gpsd TPV ``eph``,
+    # 95% confidence). None when the dongle doesn't report it, or in
+    # fixed-location mode. Forwarded to EE as ``accuracy_m`` (0.8.0+).
+    accuracy_m: Optional[float] = None
 
 
 class GpsClient:
@@ -210,6 +218,14 @@ class GpsClient:
             # mode >= 2 means 2D fix; mode 1 is "no fix" and we ignore the
             # (often present but garbage) lat/lon fields in that case.
             if mode >= 2 and lat is not None and lon is not None:
+                # eph = estimated horizontal position error in meters. Not
+                # every dongle/driver reports it; sanity-bound to EE's
+                # accuracy_m validation range (> 0, <= 10 km) and store
+                # None otherwise.
+                eph = msg.get("eph")
+                accuracy = float(eph) if isinstance(eph, (int, float)) and 0 < eph <= 10_000 else None
                 with self._lock:
                     self._dongle_seen = True
-                    self._fix = GpsFix(lat=float(lat), lon=float(lon), at=time.time())
+                    self._fix = GpsFix(
+                        lat=float(lat), lon=float(lon), at=time.time(), accuracy_m=accuracy
+                    )

@@ -159,3 +159,24 @@ def test_wire_packet_omits_eid_when_none():
     assert "eid" not in p
     p2 = ee_client.wire_packet(payload_b64="AA==", rssi=-50, timestamp=1, latitude=1.0, longitude=2.0, eid="ab")
     assert p2["eid"] == "ab"
+
+
+def test_wire_packet_includes_fix_metadata_when_present():
+    p = ee_client.wire_packet(
+        payload_b64="AA==", rssi=-50, timestamp=100, latitude=1.0, longitude=2.0,
+        position_at=95, accuracy_m=6.5,
+    )
+    assert p["position_at"] == 95
+    assert p["accuracy_m"] == 6.5
+
+
+def test_wire_packet_omits_fix_metadata_when_none_or_invalid():
+    # EE 422s on non-positive position_at / accuracy_m: "unknown" must be
+    # absent from the body, never 0.
+    p = ee_client.wire_packet(payload_b64="AA==", rssi=-50, timestamp=100, latitude=1.0, longitude=2.0)
+    assert "position_at" not in p and "accuracy_m" not in p
+    p2 = ee_client.wire_packet(
+        payload_b64="AA==", rssi=-50, timestamp=100, latitude=1.0, longitude=2.0,
+        position_at=0, accuracy_m=0.0,
+    )
+    assert "position_at" not in p2 and "accuracy_m" not in p2

@@ -81,14 +81,21 @@ def wire_packet(
     latitude: float = 90.0,
     longitude: float = 0.0,
     eid: str | None = None,
+    position_at: int | None = None,
+    accuracy_m: float | None = None,
 ) -> dict:
     """Build the JSON dict for one packet as EE's ingest API expects it.
 
     Coordinates default to (90, 0) for parity with the Hubble SDK's
     placeholder. ``eid`` (0.7.3+) is the hex device identifier the worker
     extracted locally; EE uses it to enforce a per-(org, device, day) bounty
-    cap. Omitted from the body when None so older EE versions that don't
-    expect the field stay compatible (extra fields are accepted regardless).
+    cap. ``position_at`` / ``accuracy_m`` (0.8.0+) are when the GPS fix was
+    captured (unix seconds) and its horizontal accuracy in meters; EE
+    forwards them to Hubble so a fix's true age is visible upstream instead
+    of masquerading as heard-time. All three are omitted from the body when
+    None so older EE versions that don't expect the fields stay compatible
+    (extra fields are accepted regardless), and EE 422s on non-positive
+    values, so "unknown" must be absent rather than 0.
     """
     packet = {
         "payload_b64": payload_b64,
@@ -99,6 +106,10 @@ def wire_packet(
     }
     if eid is not None:
         packet["eid"] = eid
+    if position_at is not None and position_at > 0:
+        packet["position_at"] = int(position_at)
+    if accuracy_m is not None and accuracy_m > 0:
+        packet["accuracy_m"] = accuracy_m
     return packet
 
 

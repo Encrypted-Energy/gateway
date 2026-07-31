@@ -129,6 +129,12 @@ def _flatten(packet, fix: gps.GpsFix | None = None) -> dict:
     if fix is not None:
         fields["latitude"] = fix.lat
         fields["longitude"] = fix.lon
+        # When the fix was captured (unix seconds) and how precise it was.
+        # Forwarded to EE (0.8.0+) so a queued packet uploaded later still
+        # reports the true fix-capture time, not the upload time.
+        fields["position_at"] = int(fix.at)
+        if fix.accuracy_m is not None:
+            fields["accuracy_m"] = fix.accuracy_m
     # eid is an int on the packet types that have one; store it as hex so the
     # dashboard and the eid index get a stable string key.
     eid_int = getattr(packet, "eid", None)
@@ -169,6 +175,10 @@ def _rebuild_for_ee(raw: str) -> dict | None:
         # treats absent / None eid as "skip the cap" which preserves
         # backward compat with pre-0.7.3 workers.
         "eid": fields.get("eid"),
+        # None for rows stored by pre-0.8.0 workers; wire_packet omits
+        # them and EE falls back to legacy behavior (heard-time / 10 m).
+        "position_at": fields.get("position_at"),
+        "accuracy_m": fields.get("accuracy_m"),
     }
 
 
@@ -345,6 +355,8 @@ def ingest_loop() -> None:
                     latitude=packet["latitude"],
                     longitude=packet["longitude"],
                     eid=packet.get("eid"),
+                    position_at=packet.get("position_at"),
+                    accuracy_m=packet.get("accuracy_m"),
                 )
             )
 
