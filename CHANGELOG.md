@@ -3,7 +3,7 @@
 All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [0.10.7] - 2026-07-31
 
 ### Changed
 - Worker: legacy HUBBLE_API_TOKEN env alias removed; EE_API_TOKEN (or the
@@ -25,6 +25,15 @@ All notable changes to this project are documented here. The format follows
   packet). Cuts worker→EE request volume, Hubble rate-limit pressure, and
   SD-card fsyncs by up to 500x. Also folds in the earlier 0.7.x fix that
   retries 408/429 instead of dropping packets.
+- Worker: each packet now reports position_at (when its GPS fix was
+  captured, unix seconds) and accuracy_m (horizontal accuracy from the
+  dongle's gpsd eph, when reported) alongside the coordinates. EE forwards
+  both upstream so a fix's true age and precision are visible instead of
+  defaulting to heard-time and a constant 10 m (2026-07-31 stale-location
+  incident, fleet-wide close-out). Fix TTL tightened from 30 s to 25 s so
+  every stamped fix sits inside the upstream ±30 s location-timestamp
+  integrity filter. Packets queued by older workers upload unchanged with
+  the legacy server-side fallback.
 
 ## [0.10.6] - 2026-07-18
 
