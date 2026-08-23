@@ -159,6 +159,19 @@ class GpsClient:
                 return None
             return self._fix
 
+    def raw_fix(self) -> Optional[GpsFix]:
+        """The most recent non-stale DONGLE fix, ignoring any fixed-location
+        override. Feeds ``gps.json`` for the UI's "use GPS position" setup
+        shortcut (0.8.1): the override must not echo back through it, or
+        the button would only ever offer the location already saved.
+        """
+        with self._lock:
+            if self._fix is None:
+                return None
+            if time.time() - self._fix.at > GPS_FIX_TTL_SECONDS:
+                return None
+            return self._fix
+
     def status(self) -> str:
         """One of ``"fix"``, ``"no_fix"``, ``"dongle_missing"``."""
         if self._fixed is not None:

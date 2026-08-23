@@ -1,0 +1,76 @@
+{# EE Gateway UI shared map picker (0.6.5). GPL-3.0-only; see LICENSE at the repository root.
+
+   Progressive enhancement over the coordinate fields: click the map or
+   drag the pin and the fields fill in; edit the fields and the pin moves.
+   The fields stay the source of truth and the server never sees any map
+   state, so everything keeps working with JS off or tiles unreachable.
+
+   Leaflet is vendored (no CDN); tiles load from openstreetmap.org in the
+   OPERATOR'S browser only. The gateway containers make no new network
+   calls. #}
+<link rel="stylesheet" href="{{ url_for('static', filename='vendor/leaflet/leaflet.css') }}">
+<div class="field">
+  <span class="field-label">Or pick on the map</span>
+  <div id="map-picker" style="height: 320px; border-radius: 10px; overflow: hidden;"></div>
+  <span class="field-hint">Click to drop the pin, drag it to fine-tune, zoom in
+    for rooftop accuracy. Map data &copy; OpenStreetMap contributors.</span>
+</div>
+<script src="{{ url_for('static', filename='vendor/leaflet/leaflet.js') }}"></script>
+<script>
+(function () {
+  var latEl = document.querySelector('input[name="fixed_lat"]');
+  var lonEl = document.querySelector('input[name="fixed_lon"]');
+  var mapEl = document.getElementById('map-picker');
+  if (!latEl || !lonEl || !mapEl || typeof L === 'undefined') return;
+
+  function fieldCoords() {
+    var lat = parseFloat(latEl.value), lon = parseFloat(lonEl.value);
+    if (isFinite(lat) && isFinite(lon) &&
+        Math.abs(lat) <= 90 && Math.abs(lon) <= 180 &&
+        !(lat === 0 && lon === 0) &&
+        !(lat === 90 && lon === 0)) {
+      // (0,0) is the null-island tell; (90,0) is setup's obvious
+      // "not set yet" North Pole pre-fill. Neither is a real position.
+      return [lat, lon];
+    }
+    return null;
+  }
+
+  var start = fieldCoords();
+  var map = L.map('map-picker').setView(start || [20, 0], start ? 15 : 2);
+  L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 19,
+    attribution: '&copy; OpenStreetMap contributors'
+  }).addTo(map);
+
+  var marker = null;
+  function place(lat, lon, pan) {
+    if (!marker) {
+      marker = L.marker([lat, lon], { draggable: true }).addTo(map);
+      marker.on('dragend', function () {
+        var p = marker.getLatLng();
+        latEl.value = p.lat.toFixed(6);
+        lonEl.value = p.lng.toFixed(6);
+      });
+    } else {
+      marker.setLatLng([lat, lon]);
+    }
+    if (pan) { map.setView([lat, lon], Math.max(map.getZoom(), 13)); }
+  }
+
+  if (start) { place(start[0], start[1], false); }
+
+  map.on('click', function (e) {
+    latEl.value = e.latlng.lat.toFixed(6);
+    lonEl.value = e.latlng.lng.toFixed(6);
+    place(e.latlng.lat, e.latlng.lng, false);
+  });
+
+  function syncFromFields() {
+    var c = fieldCoords();
+    if (c) { place(c[0], c[1], true); }
+  }
+  latEl.addEventListener('change', syncFromFields);
+  lonEl.addEventListener('change', syncFromFields);
+})();
+</script>

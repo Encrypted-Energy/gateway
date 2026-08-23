@@ -33,6 +33,7 @@ from __future__ import annotations
 import datetime
 import json
 import logging
+import platform
 import sqlite3
 import urllib.error
 import urllib.request
@@ -155,8 +156,13 @@ def report(
         body["ble_scan_errors_delta"] = snapshot.ble_scan_errors
 
     # Worker self-description. Older EE servers ignore unknown fields, so
-    # these are safe to send unconditionally.
-    body["worker_version"] = WORKER_VERSION
+    # these are safe to send unconditionally. The version string carries
+    # the same platform prefix the iOS/Android apps use (0.8.1+) so the
+    # fleet dashboard reads one convention; ee-web has accepted `platform`
+    # since 0.10.6 but the worker never sent it until now.
+    body["worker_version"] = f"ee-gateway-umbrel/{WORKER_VERSION}"
+    body["platform"] = "umbrel"
+    body["os_version"] = platform.platform()[:64]
     if uptime_seconds is not None:
         body["uptime_seconds"] = int(uptime_seconds)
 

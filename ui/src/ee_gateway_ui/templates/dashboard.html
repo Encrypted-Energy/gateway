@@ -27,6 +27,12 @@
       {% if status.error %}
       <p class="status-sub">{{ status.error }}</p>
       {% else %}
+      {% if status.code == 'standing_by' %}
+      <p class="status-sub">
+        Radio check: passing. Scanning is healthy, nothing has come
+        within earshot yet.
+      </p>
+      {% endif %}
       <p class="status-sub">
         Last worker update:
         <time title="{{ updated }}">{{ updated_relative }}</time>
@@ -102,6 +108,22 @@
         {% endfor %}
       </tbody>
     </table>
+    {% elif status.code == 'standing_by' %}
+    {# Standing-by explainer (0.6.5): silence in a sparse area is the
+       gateway WORKING. Reframe the empty table before the operator
+       reads it as broken, and offer the mobile path since sparse
+       neighborhoods are usually permanent. #}
+    <p class="empty">
+      Your gateway hears about 300 feet. In quieter areas the first beacon
+      can take days, and it earns the moment one passes. The radio check is
+      passing, so there's nothing to fix.
+    </p>
+    <p class="empty" style="margin-top: 8px;">
+      Want coverage that moves? The EE Gateway phone app earns wherever
+      you go.
+      <a class="link-quiet" href="https://encryptedenergy.com"
+         target="_blank" rel="noopener">Grab it at encryptedenergy.com</a>
+    </p>
     {% else %}
     <p class="empty">
       No devices yet. Once the worker scans a Hubble packet it appears here.
