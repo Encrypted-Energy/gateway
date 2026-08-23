@@ -185,6 +185,10 @@ def read_gps_fix(data_dir, now=None):
     lat, lon = raw.get("lat"), raw.get("lon")
     if not isinstance(lat, (int, float)) or not isinstance(lon, (int, float)):
         return None
+    if float(lat) == 0.0 and float(lon) == 0.0:
+        # gpsd junk, and the save validator would reject it anyway (null
+        # island). Never offer it.
+        return None
     return {"lat": round(float(lat), 6), "lon": round(float(lon), 6)}
 
 

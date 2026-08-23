@@ -19,7 +19,17 @@ build-backend = "setuptools.build_meta"
 where = ["src"]
 
 [tool.setuptools.package-data]
-ee_gateway_ui = ["templates/*.html", "static/*.css"]
+# Single-level globs only — setuptools does not recurse "*". Every static
+# subtree must be listed, or `pip install .` silently drops it from the
+# Docker image while dev checkouts keep working (this bit the Inter font:
+# it fell back to system sans in prod for three releases before 0.6.5).
+ee_gateway_ui = [
+    "templates/*.html",
+    "static/*.css",
+    "static/fonts/*",
+    "static/vendor/leaflet/*",
+    "static/vendor/leaflet/images/*",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

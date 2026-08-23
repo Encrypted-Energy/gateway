@@ -1136,3 +1136,45 @@ def test_location_pages_include_vendored_map_picker(client, tmp_path):
         assert "vendor/leaflet/leaflet.css" in body, path
         assert 'id="map-picker"' in body, path
         assert "openstreetmap.org" in body, path
+
+
+def test_gps_fix_at_null_island_is_never_offered(client, tmp_path):
+    """gpsd junk at (0,0) must not become a 'Use GPS position' offer;
+    the save validator would reject it anyway."""
+    _write_full_config(tmp_path)
+    payload = {"updated_at": time.time(), "lat": 0.0, "lon": 0.0, "at": time.time()}
+    (tmp_path / "gps.json").write_text(json.dumps(payload), encoding="utf-8")
+    body = client.get("/settings/location").data.decode("utf-8")
+    assert "Use GPS position" not in body
+
+
+def test_package_data_globs_cover_all_static_assets():
+    """Every file under static/ and templates/ must match a package-data
+    glob, or `pip install .` silently drops it from the Docker image while
+    dev checkouts keep working (the Inter font shipped missing for three
+    releases this way — the test client serves straight from the source
+    tree, so no route test can catch the hole). setuptools globs do NOT
+    recurse, so each new static subtree needs its own entry."""
+    import pathlib
+    import re
+    import tomllib
+
+    def matches(rel, pattern):
+        # setuptools globs do not cross "/" on "*" — fnmatch does, which
+        # would wave through e.g. static/themes/dark.css under static/*.css.
+        rx = "^" + re.escape(pattern).replace(r"\*", "[^/]*") + "$"
+        return re.match(rx, rel) is not None
+
+    ui_root = pathlib.Path(__file__).resolve().parents[1]
+    with open(ui_root / "pyproject.toml", "rb") as fh:
+        globs = tomllib.load(fh)["tool"]["setuptools"]["package-data"]["ee_gateway_ui"]
+
+    pkg = ui_root / "src" / "ee_gateway_ui"
+    unmatched = [
+        str(path.relative_to(pkg))
+        for sub in ("static", "templates")
+        for path in (pkg / sub).rglob("*")
+        if path.is_file()
+        and not any(matches(str(path.relative_to(pkg)), g) for g in globs)
+    ]
+    assert not unmatched, f"not covered by any package-data glob: {sorted(unmatched)}"
