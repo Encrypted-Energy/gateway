@@ -27,6 +27,25 @@
   </p>
   {% endif %}
 
+  {# GPS shortcut (0.6.5): only appears while the worker is publishing a
+     fresh dongle fix. Same review-then-save contract as the lookup. #}
+  {% if gps_fix %}
+  <form class="form" method="post" action="{{ url_for('save_settings_location') }}" autocomplete="off">
+    <input type="hidden" name="action" value="use_gps">
+    <div class="form-actions">
+      <button class="btn btn-ghost btn-block" type="submit">
+        Use GPS position ({{ gps_fix.lat }}, {{ gps_fix.lon }})
+      </button>
+    </div>
+  </form>
+  {% endif %}
+
+  {% if gps_filled %}
+  <p class="alert alert-success" role="status">
+    Filled from your GPS dongle. Check the coordinates below, then save.
+  </p>
+  {% endif %}
+
   {# Standalone lookup form, deliberately SEPARATE from the save form
      below: with two submit buttons in one form, pressing Enter in a
      coordinate field would implicitly trigger the FIRST button (the
@@ -73,6 +92,8 @@
              autocomplete="off">
       <span class="field-hint">Decimal degrees, -180 to 180.</span>
     </label>
+
+    {% include "_map_picker.html" %}
 
     <div class="form-actions">
       <button class="btn btn-primary btn-block" type="submit"

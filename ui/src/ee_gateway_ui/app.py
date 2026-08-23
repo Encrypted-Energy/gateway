@@ -69,6 +69,9 @@ VERIFY_TIMEOUT_SECONDS = 8
 # comfortably covers the round-trip. After this window, the dashboard
 # shows the worker's real status (catching truly-bad credentials).
 VERIFYING_WINDOW_SECONDS = 60
+# gps.json is rewritten every heartbeat cycle (60 s) while the worker runs;
+# 3 minutes of slack tolerates a slow cycle without offering a dead fix.
+GPS_FIX_FRESH_SECONDS = 180
 
 # status code in state.json -> (display label, tone class used by the CSS)
 _STATUS_LABELS = {
@@ -114,6 +117,10 @@ def _db_path(data_dir):
     return os.path.join(data_dir, "packets.db")
 
 
+def _gps_path(data_dir):
+    return os.path.join(data_dir, "gps.json")
+
+
 # --------------------------------------------------------------------------
 # Reads (all failure-tolerant)
 # --------------------------------------------------------------------------
@@ -155,6 +162,30 @@ def read_state(data_dir):
     """Return the worker's last-written state dict, or ``None`` if unavailable."""
     raw = _read_json(_state_path(data_dir))
     return raw if isinstance(raw, dict) else None
+
+
+def read_gps_fix(data_dir, now=None):
+    """Return the worker's current raw dongle fix, or ``None``.
+
+    The worker publishes ``gps.json`` on every heartbeat cycle (0.8.1+).
+    Only a recently written file with coordinates counts: a stale file
+    means the worker stopped, and a fresh file without lat/lon means the
+    dongle has no fix. Either way the "use GPS position" shortcut should
+    simply not appear rather than offer coordinates that may be wrong.
+    """
+    raw = _read_json(_gps_path(data_dir))
+    if not isinstance(raw, dict):
+        return None
+    updated_at = raw.get("updated_at")
+    if not isinstance(updated_at, (int, float)):
+        return None
+    current = now if now is not None else time.time()
+    if current - updated_at > GPS_FIX_FRESH_SECONDS:
+        return None
+    lat, lon = raw.get("lat"), raw.get("lon")
+    if not isinstance(lat, (int, float)) or not isinstance(lon, (int, float)):
+        return None
+    return {"lat": round(float(lat), 6), "lon": round(float(lon), 6)}
 
 
 def read_devices(data_dir):
@@ -505,6 +536,22 @@ def _status_view(state):
             "needs_creds": False,
         }
     code = str(state.get("status") or "unknown")
+
+    # Standing-by (0.6.5): a healthy scanner that has never heard a packet
+    # is WORKING, not broken. Sparse areas are real and permanent; without
+    # this state the dashboard reads like a dead install and operators
+    # churn (the day-7 standby email's in-app twin).
+    if code == "running":
+        packets = state.get("packets") or {}
+        if packets.get("total") == 0:
+            return {
+                "code": "standing_by",
+                "label": "Standing by",
+                "tone": "ok",
+                "error": None,
+                "needs_creds": False,
+            }
+
     label, tone = _STATUS_LABELS.get(
         code, (code.replace("_", " ").capitalize(), "neutral")
     )
@@ -746,6 +793,7 @@ def create_app(data_dir=None):
             "setup_location.html",
             fixed_lat="",
             fixed_lon="",
+            gps_fix=read_gps_fix(data_dir),
             error=None,
         )
 
@@ -778,6 +826,7 @@ def create_app(data_dir=None):
                         fixed_lat="",
                         fixed_lon="",
                         address=address,
+                        gps_fix=read_gps_fix(data_dir),
                         error=err,
                     ),
                     400,
@@ -788,6 +837,32 @@ def create_app(data_dir=None):
                 fixed_lon=hit["lon"],
                 address=address,
                 geocoded=hit["display_name"],
+                gps_fix=read_gps_fix(data_dir),
+                error=None,
+            )
+
+        # "Use GPS position" submit: fill the coordinate fields from the
+        # dongle's current fix for review. Nothing saves until the operator
+        # confirms — same review-then-save contract as the address lookup.
+        if request.form.get("action") == "use_gps":
+            fix = read_gps_fix(data_dir)
+            if fix is None:
+                return (
+                    render_template(
+                        "setup_location.html",
+                        fixed_lat="",
+                        fixed_lon="",
+                        gps_fix=None,
+                        error="The GPS fix went away. Check the dongle and try again.",
+                    ),
+                    400,
+                )
+            return render_template(
+                "setup_location.html",
+                fixed_lat=fix["lat"],
+                fixed_lon=fix["lon"],
+                gps_fix=fix,
+                gps_filled=True,
                 error=None,
             )
 
@@ -824,6 +899,7 @@ def create_app(data_dir=None):
             "settings_location.html",
             fixed_lat="" if lat is None else lat,
             fixed_lon="" if lon is None else lon,
+            gps_fix=read_gps_fix(data_dir),
             error=None,
             saved=False,
         )
@@ -852,6 +928,7 @@ def create_app(data_dir=None):
                         fixed_lat="" if cur_lat is None else cur_lat,
                         fixed_lon="" if cur_lon is None else cur_lon,
                         address=address,
+                        gps_fix=read_gps_fix(data_dir),
                         error=err,
                         saved=False,
                     ),
@@ -863,6 +940,33 @@ def create_app(data_dir=None):
                 fixed_lon=hit["lon"],
                 address=address,
                 geocoded=hit["display_name"],
+                gps_fix=read_gps_fix(data_dir),
+                error=None,
+                saved=False,
+            )
+
+        # "Use GPS position" — same review-then-save flow as setup step 2.
+        if request.form.get("action") == "use_gps":
+            fix = read_gps_fix(data_dir)
+            if fix is None:
+                cur_lat, cur_lon = read_advanced_config(data_dir)
+                return (
+                    render_template(
+                        "settings_location.html",
+                        fixed_lat="" if cur_lat is None else cur_lat,
+                        fixed_lon="" if cur_lon is None else cur_lon,
+                        gps_fix=None,
+                        error="The GPS fix went away. Check the dongle and try again.",
+                        saved=False,
+                    ),
+                    400,
+                )
+            return render_template(
+                "settings_location.html",
+                fixed_lat=fix["lat"],
+                fixed_lon=fix["lon"],
+                gps_fix=fix,
+                gps_filled=True,
                 error=None,
                 saved=False,
             )

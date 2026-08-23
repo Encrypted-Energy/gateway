@@ -21,6 +21,7 @@ POSTs don't actually try to reach encryptedenergy.com.
 
 import json
 import sqlite3
+import time
 
 import pytest
 
@@ -1012,3 +1013,126 @@ def test_index_renders_dashboard_from_token_only_config(client, tmp_path):
     response = client.get("/")
     assert response.status_code == 200
     assert b"40.7" in response.data
+
+
+# --------------------------------------------------------------------------
+# Standing-by state (0.6.5)
+# --------------------------------------------------------------------------
+
+def test_dashboard_standing_by_when_running_with_zero_packets(client, tmp_path):
+    """A healthy scanner that has never heard a packet reads as working,
+    not broken: sparse areas are real, and 'Running' with empty numbers
+    looked like a dead install."""
+    _write_full_config(tmp_path)
+    _write_state(tmp_path, {
+        "status": "running",
+        "error": None,
+        "updated_at": 1700000000.0,
+        "packets": {"total": 0, "ingested": 0, "pending": 0, "devices": 0},
+    })
+    response = client.get("/")
+    body = response.data.decode("utf-8")
+    assert "Standing by" in body
+    assert "Radio check: passing" in body
+    assert "300 feet" in body
+
+
+def test_dashboard_with_packets_is_running_not_standing_by(client, tmp_path):
+    _write_full_config(tmp_path)
+    _write_state(tmp_path, {
+        "status": "running",
+        "error": None,
+        "updated_at": 1700000000.0,
+        "packets": {"total": 42, "ingested": 40, "pending": 2, "devices": 7},
+    })
+    body = client.get("/").data.decode("utf-8")
+    assert "Running" in body
+    assert "Standing by" not in body
+
+
+def test_dashboard_old_worker_without_counts_is_running(client, tmp_path):
+    """A pre-0.5.0 worker state file has no packets block; missing counts
+    must not read as standing by (total is unknown, not zero)."""
+    _write_full_config(tmp_path)
+    _write_state(tmp_path, {
+        "status": "running",
+        "error": None,
+        "updated_at": 1700000000.0,
+    })
+    body = client.get("/").data.decode("utf-8")
+    assert "Running" in body
+    assert "Standing by" not in body
+
+
+# --------------------------------------------------------------------------
+# GPS auto-detect shortcut (0.6.5)
+# --------------------------------------------------------------------------
+
+def _write_gps(data_dir, *, age_seconds=0, with_coords=True):
+    """Drop a gps.json as the 0.8.1 worker would."""
+    payload = {"updated_at": time.time() - age_seconds}
+    if with_coords:
+        payload.update(lat=48.8971142, lon=2.3467015, at=payload["updated_at"])
+    (data_dir / "gps.json").write_text(json.dumps(payload), encoding="utf-8")
+
+
+def test_settings_location_offers_gps_button_with_fresh_fix(client, tmp_path):
+    _write_full_config(tmp_path)
+    _write_gps(tmp_path)
+    body = client.get("/settings/location").data.decode("utf-8")
+    assert "Use GPS position" in body
+    assert "48.897114" in body
+
+
+def test_settings_location_hides_gps_button_when_stale(client, tmp_path):
+    _write_full_config(tmp_path)
+    _write_gps(tmp_path, age_seconds=3600)
+    body = client.get("/settings/location").data.decode("utf-8")
+    assert "Use GPS position" not in body
+
+
+def test_settings_location_hides_gps_button_without_coords(client, tmp_path):
+    """Fresh file, no fix: the worker is alive but the dongle has nothing.
+    The shortcut must not appear rather than offer junk."""
+    _write_full_config(tmp_path)
+    _write_gps(tmp_path, with_coords=False)
+    body = client.get("/settings/location").data.decode("utf-8")
+    assert "Use GPS position" not in body
+
+
+def test_use_gps_fills_fields_for_review_without_saving(client, tmp_path):
+    _write_creds_only(tmp_path)
+    _write_gps(tmp_path)
+    response = client.post("/setup/location", data={"action": "use_gps"})
+    assert response.status_code == 200
+    body = response.data.decode("utf-8")
+    assert "48.897114" in body
+    assert "Filled from your GPS dongle" in body
+    # Review-then-save: nothing was persisted by the fill step.
+    cfg = json.loads((tmp_path / "config.json").read_text(encoding="utf-8"))
+    assert "fixed_lat" not in cfg
+
+
+def test_use_gps_with_stale_fix_is_an_error(client, tmp_path):
+    _write_creds_only(tmp_path)
+    _write_gps(tmp_path, age_seconds=3600)
+    response = client.post("/setup/location", data={"action": "use_gps"})
+    assert response.status_code == 400
+    assert b"GPS fix went away" in response.data
+
+
+# --------------------------------------------------------------------------
+# Map picker (0.6.5)
+# --------------------------------------------------------------------------
+
+def test_location_pages_include_vendored_map_picker(client, tmp_path):
+    """Both location pages carry the Leaflet include and the picker div.
+    Vendored assets, not a CDN: the UI must not gain third-party script
+    dependencies."""
+    _write_creds_only(tmp_path)
+    for path in ("/setup/location", "/settings/location"):
+        body = client.get(path).data.decode("utf-8")
+        assert "vendor/leaflet/leaflet.js" in body, path
+        assert "vendor/leaflet/leaflet.css" in body, path
+        assert 'id="map-picker"' in body, path
+        assert "openstreetmap.org" in body, path

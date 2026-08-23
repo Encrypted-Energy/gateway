@@ -171,3 +171,58 @@ def test_consume_restart_signal_returns_true_and_deletes(tmp_path, monkeypatch):
     assert not signal_path.exists()
     # Second call sees no file.
     assert main._consume_restart_signal() is False
+
+
+# --- gps.json for the UI (0.8.1+) ------------------------------------------
+
+def test_write_gps_json_with_raw_fix(tmp_path):
+    """A live dongle fix lands in gps.json with coords and timestamps."""
+    import time as _time
+
+    class _Client:
+        def raw_fix(self):
+            return GpsFix(lat=48.8971, lon=2.3467, at=1700000000.0)
+
+    target = tmp_path / "gps.json"
+    main._write_gps_json(_Client(), path=str(target), now=1700000010.0)
+
+    data = json.loads(target.read_text(encoding="utf-8"))
+    assert data == {
+        "updated_at": 1700000010.0,
+        "lat": 48.8971,
+        "lon": 2.3467,
+        "at": 1700000000.0,
+    }
+
+
+def test_write_gps_json_without_fix_still_writes(tmp_path):
+    """No fix -> the file still exists with only updated_at, so the UI can
+    tell 'no fix right now' from 'worker too old to publish gps.json'."""
+
+    class _Client:
+        def raw_fix(self):
+            return None
+
+    target = tmp_path / "gps.json"
+    main._write_gps_json(_Client(), path=str(target), now=1700000010.0)
+
+    data = json.loads(target.read_text(encoding="utf-8"))
+    assert data == {"updated_at": 1700000010.0}
+
+
+def test_raw_fix_ignores_fixed_location_override():
+    """The 'use GPS position' shortcut must offer the DONGLE's position,
+    never echo the already-saved override back through gps.json."""
+    import time as _time
+    from ee_gateway_worker import gps as gps_mod
+
+    client = gps_mod.GpsClient(fixed_lat=1.0, fixed_lon=2.0)  # not started
+    assert client.raw_fix() is None  # override alone is not a raw fix
+
+    with client._lock:
+        client._fix = GpsFix(lat=3.0, lon=4.0, at=_time.time())
+    raw = client.raw_fix()
+    assert (raw.lat, raw.lon) == (3.0, 4.0)
+    # current_fix still prefers the override for the packet path.
+    current = client.current_fix()
+    assert (current.lat, current.lon) == (1.0, 2.0)

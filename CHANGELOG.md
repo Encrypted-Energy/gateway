@@ -3,6 +3,28 @@
 All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased] - staged for 0.10.8
+
+### Added
+- UI 0.6.5: standing-by state. A healthy scanner that hasn't heard a
+  packet yet shows "Standing by" with "Radio check: passing" and an
+  explainer instead of a dead-looking Running dashboard. Sparse areas
+  are the norm for new installs; silence is the gateway working.
+- UI 0.6.5: map picker on both location pages. Click the map or drag
+  the pin to set coordinates; the fields stay the source of truth and
+  everything still works with JS off. Leaflet is vendored (no CDN);
+  map tiles load from openstreetmap.org in the operator's browser only.
+- UI 0.6.5: "Use GPS position" shortcut on both location pages when a
+  GPS dongle has a live fix. Review-then-save, same as the address
+  lookup. Powered by gps.json, which the worker now publishes each
+  heartbeat cycle (raw dongle fix only, never the fixed override).
+
+### Changed
+- Worker 0.8.1: heartbeat sends `worker_version` with the
+  `ee-gateway-umbrel/` prefix plus explicit `platform: "umbrel"` and
+  `os_version`, matching the iOS/Android convention so the fleet reads
+  one format. ee-web has accepted these fields since 0.10.6.
+
 ## [0.10.7] - 2026-07-31
 
 ### Changed

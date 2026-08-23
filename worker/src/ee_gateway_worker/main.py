@@ -59,6 +59,7 @@ CONFIG_PATH = os.path.join(DATA_DIR, "config.json")
 RESTART_SIGNAL_PATH = os.path.join(DATA_DIR, ".restart_requested")
 DB_PATH = os.path.join(DATA_DIR, "packets.db")
 STATE_PATH = os.path.join(DATA_DIR, "state.json")
+GPS_JSON_PATH = os.path.join(DATA_DIR, "gps.json")
 
 # How often the ingest loop wakes to look for pending packets, and how many
 # it drains per wake. All packets drained in a wake are sent to EE in ONE
@@ -223,6 +224,31 @@ def _write_state(conn, *, status: str, error: str | None = None) -> None:
         os.replace(tmp, STATE_PATH)  # atomic; the UI never sees a half file
     except OSError as exc:
         log.warning("could not write state file: %s", exc)
+
+
+def _write_gps_json(gps_client, *, path: str | None = None, now: float | None = None) -> None:
+    """Publish the current raw dongle fix for the UI container (0.8.1).
+
+    Powers the "use GPS position" shortcut on the location pages. Always
+    the RAW fix (never the fixed-location override; see GpsClient.raw_fix)
+    and always written, even with no fix, so the UI can tell "no fix right
+    now" from "worker too old to publish gps.json". Best effort like the
+    state file.
+    """
+    target = path or GPS_JSON_PATH
+    try:
+        fix = gps_client.raw_fix() if gps_client is not None else None
+        data = {"updated_at": now if now is not None else time.time()}
+        if fix is not None:
+            data["lat"] = fix.lat
+            data["lon"] = fix.lon
+            data["at"] = fix.at
+        tmp = target + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump(data, fh)
+        os.replace(tmp, target)
+    except OSError as exc:
+        log.warning("could not write gps file: %s", exc)
 
 
 # --- scan loop -------------------------------------------------------------
@@ -410,6 +436,11 @@ def heartbeat_loop() -> None:
     last_vacuum = 0.0  # epoch seconds; 0 forces a check on the first iteration
     try:
         while not _stop.is_set():
+            # Publish the raw fix BEFORE the credential gate: the setup
+            # wizard's location step wants "use GPS position" to work on
+            # a first boot, when config.json may not exist yet.
+            _write_gps_json(_gps)
+
             try:
                 cfg = config.load(CONFIG_PATH)
             except config.ConfigError:
