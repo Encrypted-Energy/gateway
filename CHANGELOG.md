@@ -3,7 +3,7 @@
 All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased] - staged for 0.10.8
+## [0.10.8] - 2026-08-23
 
 ### Added
 - UI 0.6.5: standing-by state. A healthy scanner that hasn't heard a
